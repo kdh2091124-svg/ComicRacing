@@ -7,6 +7,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local RagdollRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Ragdoll") :: RemoteEvent
+local Health = require(ReplicatedStorage:WaitForChild("Shared").Config.GameplayConfig).Health
+local startFlail -- 아래에서 정의
 local player = Players.LocalPlayer
 
 local function pushAll(char: Model, fling: Vector3, spin: Vector3)
@@ -18,6 +20,42 @@ local function pushAll(char: Model, fling: Vector3, spin: Vector3)
 			p.AssemblyAngularVelocity = spin
 		end
 	end
+end
+
+-- 땡깡 휘적휘적: 날아가는 동안 팔다리를 아주 빠르게 마구 돌림
+local flailing = false
+local function isLimb(name: string): boolean
+	return string.find(name, "Arm") ~= nil or string.find(name, "Leg") ~= nil
+		or string.find(name, "Hand") ~= nil or string.find(name, "Foot") ~= nil
+end
+
+function startFlail(char: Model)
+	flailing = true
+	local limbs: { BasePart } = {}
+	for _, p in char:GetDescendants() do
+		if p:IsA("BasePart") and isLimb(p.Name) then
+			table.insert(limbs, p)
+		end
+	end
+	local t0 = os.clock()
+	local conn
+	conn = RunService.Heartbeat:Connect(function()
+		local t = os.clock() - t0
+		if not flailing or t > Health.flailTime or not char.Parent then
+			conn:Disconnect()
+			return
+		end
+		-- 끝으로 갈수록 조금씩 지쳐서 느려짐
+		local power = Health.flailSpeed * (1 - 0.6 * (t / Health.flailTime))
+		for i, limb in limbs do
+			local f = t * Health.flailRate
+			limb.AssemblyAngularVelocity = Vector3.new(
+				math.noise(f, i * 1.7, 0),
+				math.noise(i * 2.3, f, 0),
+				math.noise(0, i * 3.1, f)
+			) * power * 2
+		end
+	end)
 end
 
 RagdollRemote.OnClientEvent:Connect(function(kind: string, fling: Vector3?)
@@ -57,8 +95,10 @@ RagdollRemote.OnClientEvent:Connect(function(kind: string, fling: Vector3?)
 				end
 			end)
 			pushAll(char, fling, spin)
+			startFlail(char)
 		end
 	elseif kind == "Off" then
+		flailing = false
 		hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
 		hum:ChangeState(Enum.HumanoidStateType.GettingUp)
 	end

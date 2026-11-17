@@ -33,9 +33,9 @@ function Ragdoll.Enable(player: Player, fling: Vector3)
 			ball.Attachment1 = a1
 			ball.LimitsEnabled = true
 			ball.TwistLimitsEnabled = true
-			ball.UpperAngle = 50
-			ball.TwistLowerAngle = -40
-			ball.TwistUpperAngle = 40
+			ball.UpperAngle = 95 -- 크게 꺾여야 휘적거림이 잘 보임
+			ball.TwistLowerAngle = -75
+			ball.TwistUpperAngle = 75
 			ball.Parent = motor.Part0
 			motor.Enabled = false
 		end

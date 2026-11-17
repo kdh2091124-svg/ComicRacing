@@ -157,7 +157,11 @@ GameplayConfig.Health = {
 	flingSide = 75, -- 옆으로 날아가는 속도 (랜덤 방향)
 	debrisSpeed = 90, -- 차 조각 옆으로 흩어지는 속도
 	debrisUp = 100, -- 차 조각 위로 튀는 속도
-	chassisLaunch = 140, -- 차 몸통이 하늘로 튀어오르는 속도
+	chassisLaunch = 140,
+	-- 날아가는 동안 팔다리 땡깡 휘적휘적
+	flailTime = 1.8, -- 휘적거리는 시간 (초)
+	flailSpeed = 30, -- 팔다리 도는 세기
+	flailRate = 9, -- 방향 바뀌는 빠르기 (클수록 더 정신없음) -- 차 몸통이 하늘로 튀어오르는 속도
 	debrisTime = 4, -- 차 조각 남는 시간 (초)
 	safeSpotInterval = 0.5, -- 부활 위치 기록 간격 (땅에 똑바로 있을 때만)
 }

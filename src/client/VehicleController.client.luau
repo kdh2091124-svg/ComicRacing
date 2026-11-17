@@ -93,6 +93,7 @@ local session: {
 	lastDamage: number,
 	lastHazard: number,
 	prevPos: Vector3?,
+	lastCF: CFrame?,
 	topSpeed: number,
 	boost: number,
 	flippedTime: number,
@@ -689,10 +690,30 @@ local function step(dt: number)
 	local dv = (s.prevVel - vel).Magnitude
 	if not teleported and dv > HealthConfig.minImpactSpeed and now - s.lastDamage > 0.2 then
 		s.lastDamage = now
-		VehicleFX:FireServer("Damage", (dv - HealthConfig.minImpactSpeed) * HealthConfig.damagePerSpeed)
-		ChaseCamera.Punch(math.clamp(dv / 80, 0.3, 1.5))
+		local dmg = math.min((dv - HealthConfig.minImpactSpeed) * HealthConfig.damagePerSpeed, HealthConfig.maxPerHit)
+		local hp = s.model:GetAttribute("HP")
+		if type(hp) == "number" and hp - dmg <= 0 and s.lastCF then
+			-- 치명타! 서버 답을 기다리지 않고 "닿은 그 순간" 위치로 되돌려 바로 정지
+			-- (기다리면 통신 지연 동안 차가 벽에 밀착돼서 ][ 모양이 된 뒤에 멈춤)
+			s.model:PivotTo(s.lastCF)
+			chassis.Anchored = true
+			s.force.Force = Vector3.zero
+			s.torque.Torque = Vector3.zero
+			VehicleEffects.PlayPreExplosion(s.model, chassis.Position, HealthConfig.tickDelay + 0.3)
+			-- 혹시 서버가 치명타가 아니라고 판단하면 (회복 타이밍 차이 등) 1초 뒤 풀어줌
+			local model = s.model
+			task.delay(1.2, function()
+				if chassis.Parent and not model:GetAttribute("Exploding") and not model:GetAttribute("Exploded") then
+					chassis.Anchored = false
+				end
+			end)
+		else
+			ChaseCamera.Punch(math.clamp(dv / 80, 0.3, 1.5))
+		end
+		VehicleFX:FireServer("Damage", dmg)
 	end
 	s.prevVel = vel
+	s.lastCF = s.model:GetPivot() -- 다음 프레임에 쓸 "박기 직전" 위치
 
 	-- 용암 / 물
 	if onLava and now - s.lastHazard > 0.2 then
@@ -839,6 +860,7 @@ local function startDriving(seat: Seat, hum: Humanoid)
 		lastDamage = 0,
 		lastHazard = 0,
 		prevPos = nil,
+		lastCF = nil,
 		topSpeed = 0,
 		boost = 1,
 		flippedTime = 0,

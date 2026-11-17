@@ -79,12 +79,17 @@ local function explode(model: Model, frozen: { BasePart }?, savedVel: Vector3?)
 
 	-- 1) 탄 사람 전부 내리고 래그돌로 날리기
 	for _, hum in occupantsOf(model) do
+		-- 운전석/동승석 모두 "자동으로 내림" 판정: 좌석 연결 끊고, 차 몸통에 안 걸리게 살짝 위로 빼냄
 		local seat = hum.SeatPart
 		local weld = seat and seat:FindFirstChild("SeatWeld")
 		if weld then
 			weld:Destroy()
 		end
 		hum.Sit = false
+		local char = hum.Parent
+		if char and char:IsA("Model") and seat then
+			char:PivotTo(CFrame.new(seat.Position + Vector3.new(0, 3, 0)) * (char:GetPivot() - char:GetPivot().Position))
+		end
 		local player = Players:GetPlayerFromCharacter(hum.Parent)
 		if player then
 			local a = math.random() * math.pi * 2
