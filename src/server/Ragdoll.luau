@@ -87,12 +87,13 @@ local function startMotion(char: Model, fling: Vector3)
 			launch()
 		end
 		-- 땡깡: 팔다리를 각자 축으로 앞뒤로 크게 휘두름 (박자 엇갈림), 끝으로 갈수록 지침
-		local fade = 1 - 0.5 * (t / Health.flailTime)
+		local fade = 1 - 0.25 * (t / Health.flailTime)
 		local w = 2 * math.pi * Health.flailRate
 		for i, limb in limbs do
 			local swing = math.sin(w * t + phases[i])
 			local axis = limb.CFrame.RightVector
-			local wobble = limb.CFrame.LookVector * math.sin(w * 0.7 * t + phases[i] * 1.3) * 0.4
+			local wobble = limb.CFrame.LookVector * math.sin(w * 0.73 * t + phases[i] * 1.3) * 0.9
+				+ limb.CFrame.UpVector * math.sin(w * 1.31 * t + phases[i] * 2.1) * 0.6 -- 여러 방향으로 정신없이
 			limb.AssemblyAngularVelocity = (axis * swing + wobble) * Health.flailSpeed * fade
 		end
 	end)
@@ -116,9 +117,9 @@ function Ragdoll.Enable(player: Player, fling: Vector3)
 		ball.Attachment1 = a1
 		ball.LimitsEnabled = true
 		ball.TwistLimitsEnabled = true
-		ball.UpperAngle = 95 -- 크게 꺾여야 휘적거림이 잘 보임
-		ball.TwistLowerAngle = -75
-		ball.TwistUpperAngle = 75
+		ball.UpperAngle = 130 -- 크게 꺾여야 휘적거림이 우스꽝스럽게 보임
+		ball.TwistLowerAngle = -110
+		ball.TwistUpperAngle = 110
 		ball.Parent = parent
 	end
 	for _, joint in char:GetDescendants() do

@@ -160,9 +160,9 @@ GameplayConfig.Health = {
 	debrisUp = 100, -- 차 조각 위로 튀는 속도
 	chassisLaunch = 100,
 	-- 날아가는 동안 팔다리 땡깡 휘적휘적
-	flailTime = 1.8, -- 휘적거리는 시간 (초)
-	flailSpeed = 22, -- 팔다리 휘두르는 세기
-	flailRate = 7, -- 초당 휘두르는 횟수 (땡깡 박자)
+	flailTime = 2.5, -- 휘적거리는 시간 (초)
+	flailSpeed = 50, -- 팔다리 휘두르는 세기 (우스꽝스럽게 세게)
+	flailRate = 13, -- 초당 휘두르는 횟수 (땡깡 박자, 미친듯이 빠르게)
 	-- 날아갈 때 뒤로 도는(공중제비) 세기. 처음 한 번만 주고 나머진 물리에 맡김 → 자연스러운 포물선
 	bodySpin = 6, -- 몸 전체 공중제비 회전 속도 (라디안/초)
 	debrisTime = 4, -- 차 조각 남는 시간 (초)
