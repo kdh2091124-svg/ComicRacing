@@ -718,6 +718,26 @@ function VehicleEffects.PlayExplosion(pos: Vector3)
 	fire:Emit(E.fire)
 	smoke:Emit(E.smoke)
 	sparks:Emit(E.sparks)
+	-- 충격파: 순식간에 커지며 사라지는 빛나는 공 (파앙!)
+	local ring = Instance.new("Part")
+	ring.Name = "Shockwave"
+	ring.Shape = Enum.PartType.Ball
+	ring.Anchored = true
+	ring.CanCollide = false
+	ring.CanQuery = false
+	ring.CanTouch = false
+	ring.CastShadow = false
+	ring.Material = Enum.Material.Neon
+	ring.Color = Color3.fromRGB(255, 200, 120)
+	ring.Transparency = 0.25
+	ring.Size = Vector3.one * 3
+	ring.CFrame = CFrame.new(pos)
+	ring.Parent = getFxFolder()
+	TweenService:Create(ring, TweenInfo.new(E.shockwaveTime, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+		Size = Vector3.one * E.shockwaveSize,
+		Transparency = 1,
+	}):Play()
+	Debris:AddItem(ring, E.shockwaveTime + 0.1)
 	local flash = Instance.new("PointLight")
 	flash.Color = Color3.fromRGB(255, 180, 90)
 	flash.Range = E.flashRange

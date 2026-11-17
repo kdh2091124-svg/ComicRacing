@@ -152,9 +152,11 @@ GameplayConfig.Health = {
 	drownY = -8, -- 이 높이 아래로 빠지면 (바다 등) 바로 폭발
 	-- 폭발
 	respawnDelay = 3, -- 오픈월드: 폭발 후 이 초 뒤 그 근처에서 차와 함께 부활 (개발자 확정)
-	flingUp = 70, -- 탄 사람이 날아가는 위쪽 속도
-	flingSide = 45, -- 옆으로 날아가는 속도 (랜덤 방향)
-	debrisSpeed = 55, -- 차 조각 날아가는 속도
+	flingUp = 130, -- 탄 사람이 날아가는 위쪽 속도 (파앙!)
+	flingSide = 75, -- 옆으로 날아가는 속도 (랜덤 방향)
+	debrisSpeed = 90, -- 차 조각 옆으로 흩어지는 속도
+	debrisUp = 100, -- 차 조각 위로 튀는 속도
+	chassisLaunch = 140, -- 차 몸통이 하늘로 튀어오르는 속도
 	debrisTime = 4, -- 차 조각 남는 시간 (초)
 	safeSpotInterval = 0.5, -- 부활 위치 기록 간격 (땅에 똑바로 있을 때만)
 }

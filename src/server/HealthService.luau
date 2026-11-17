@@ -110,19 +110,26 @@ local function explode(model: Model)
 	end
 	for _, p in model:GetDescendants() do
 		if p:IsA("BasePart") then
-			if p.Name == "ParkingSupport" then
+			if p.Name == "ParkingSupport" or p.Name == "CarScratch" then
 				p:Destroy()
 			else
 				p.Anchored = false
 				p.Massless = false
 				p.CanCollide = true
 				local dir = (p.Position - pos)
-				dir = dir.Magnitude > 0.1 and dir.Unit or Vector3.yAxis
-				p.AssemblyLinearVelocity = carVel * 0.4 + dir * Health.debrisSpeed + Vector3.new(0, Health.debrisSpeed * 0.6, 0)
-				p.AssemblyAngularVelocity = Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5) * 20
+				if dir.Magnitude < 0.1 then
+					dir = Vector3.new(math.random() - 0.5, 0, math.random() - 0.5)
+				end
+				dir = (dir * Vector3.new(1, 0, 1) + Vector3.new(0, 0.001, 0)).Unit
+				local up = Health.debrisUp * (0.7 + math.random() * 0.6)
+				p.AssemblyLinearVelocity = carVel * 0.3 + dir * Health.debrisSpeed * (0.6 + math.random() * 0.8) + Vector3.new(0, up, 0)
+				p.AssemblyAngularVelocity = Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5) * 30
 			end
 		end
 	end
+	-- 차체(몸통)는 하늘로 크게 튀어오르며 빙글빙글
+	chassis.AssemblyLinearVelocity = carVel * 0.3 + Vector3.new(0, Health.chassisLaunch, 0)
+	chassis.AssemblyAngularVelocity = Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5) * 18
 	model.Name = model.Name .. "_Wreck"
 	Debris:AddItem(model, Health.debrisTime)
 

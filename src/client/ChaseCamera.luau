@@ -57,6 +57,7 @@ end
 -- ===== 둘러보기: 우클릭 누른 채 마우스 이동 / 게임패드 오른쪽 스틱 =====
 -- 손을 떼면 서서히 차 뒤로 돌아옴
 local orbitYaw, orbitPitch = 0, 0
+local camYaw: number?, camPitch = nil, 0 -- 실제 카메라 각도 (부드럽게 따라감)
 local orbiting = false
 local stick2 = Vector2.zero
 local inputConns: { RBXScriptConnection } = {}
@@ -122,6 +123,7 @@ function ChaseCamera.Start(model: Model, seat: BasePart)
 
 	active = true
 	currentCF = nil
+	camYaw, camPitch = nil, 0
 	orbitYaw, orbitPitch = 0, 0
 	camera.CameraType = Enum.CameraType.Scriptable
 	startOrbitInput()
@@ -184,14 +186,29 @@ function ChaseCamera.Start(model: Model, seat: BasePart)
 		smoothRoll += (targetRoll - smoothRoll) * math.min(dt * 5, 1)
 		-- 빠를수록 카메라가 살짝 뒤로 빠짐
 		local d = dist * (1 + CamConfig.speedPullBack * math.min(sr, 1.3))
-		-- 둘러보기: 차 주위로 돌고(yaw), 위아래로 올라감(pitch)
-		flat = orbitRot:VectorToWorldSpace(flat)
-		local target = chassis.Position - flat * d * math.cos(orbitPitch)
-			+ Vector3.new(0, height + d * math.sin(orbitPitch), 0)
+		-- 각도 기준 카메라: 차를 중심으로 (좌우각, 위아래각, 거리) 로 위치를 정함
+		-- → 둘러볼 때 항상 원을 그리며 돌고, 위치를 보간하다 차를 가로지르는 문제 없음
+		local headingYaw = math.atan2(-flat.X, -flat.Z)
+		local targetYaw = headingYaw + orbitYaw
+		local basePitch = math.atan2(height * 0.7, d)
+		local targetPitch = math.clamp(basePitch + orbitPitch, -0.2, 1.35)
 		local alpha = 1 - math.exp(-CamConfig.followSharpness * dt)
-		local pos = currentCF and currentCF.Position:Lerp(target, alpha) or target
-		currentCF = CFrame.lookAt(pos, chassis.Position + Vector3.new(0, height * 0.3, 0))
+		if camYaw == nil then
+			camYaw, camPitch = targetYaw, targetPitch
+		end
+		-- 가까운 쪽으로 돌기 (한 바퀴 차이 보정)
+		local diff = (targetYaw - camYaw + math.pi) % (2 * math.pi) - math.pi
+		-- 드래그 중엔 손 따라 바로, 아닐 땐 부드럽게 차 뒤로 따라감
+		camYaw += diff * (orbiting and 1 or alpha)
+		camPitch += (targetPitch - camPitch) * (orbiting and 1 or alpha)
+		local focus = chassis.Position + Vector3.new(0, height * 0.3, 0)
+		local look = CFrame.fromEulerAnglesYXZ(-camPitch, camYaw, 0).LookVector
+		local pos = focus - look * math.sqrt(d * d + (height * 0.7) ^ 2)
+		currentCF = CFrame.lookAt(pos, focus)
 		camera.CFrame = currentCF * CFrame.Angles(0, 0, smoothRoll) * CFrame.new(shake)
+		if orbiting then
+			UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition -- 기본 카메라가 풀어버리는 것 방지
+		end
 	end)
 end
 

@@ -37,13 +37,15 @@ EffectsConfig.Grind = {
 
 -- 대폭발 연출
 EffectsConfig.Explosion = {
-	fire = 45,
-	smoke = 30,
-	sparks = 70,
-	flashRange = 50,
-	flashBrightness = 12,
-	shake = 2,
-	shakeDistance = 90,
+	fire = 70,
+	smoke = 40,
+	sparks = 110,
+	flashRange = 70,
+	flashBrightness = 18,
+	shake = 3,
+	shakeDistance = 110,
+	shockwaveSize = 45, -- 충격파 최대 크기 (스터드)
+	shockwaveTime = 0.35, -- 충격파 퍼지는 시간 (초)
 }
 EffectsConfig.slideSkidAngle = 14 -- 드리프트 아니어도 이 각도 이상 미끄러지면 스키드 마크
 
