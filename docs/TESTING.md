@@ -11,6 +11,14 @@
    그러면 `Workspace.Map` 이 생긴다. 이제 직접 고쳐도 되고, Rojo는 맵을 건드리지 않는다.
 5. 꼭 **저장하거나 게시**한다. 맵은 Git이 아니라 플레이스 파일에 저장되기 때문이다.
 
+## 오픈월드 도로 (새 맵)
+Studio 명령줄 (기존 Workspace.Map 은 ServerStorage 로 백업됨):
+```lua
+require(game.ServerStorage.Tools.RoadBuilder).Build()
+```
+- 길 모양은 `src/tools/RoadBuilder.luau` 의 `ROUTES` 점만 고치면 됨 (다시 Build 하면 반영)
+- 직접 손볼 땐 Workspace.Map.Roads 안의 조각을 움직이면 됨
+
 ## 1단계 확인할 것
 - [ ] Play → 왼쪽 위 **차 꺼내기** → 마트 카트 → 앞에 임시 상자 차가 나오는지
 - [ ] 차에 다가가 **E(운전하기)** → 카메라가 차 뒤로 붙는지
