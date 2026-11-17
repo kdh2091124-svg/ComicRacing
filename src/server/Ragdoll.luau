@@ -86,6 +86,9 @@ local function startMotion(char: Model, fling: Vector3)
 		if frames <= 2 then
 			launch()
 		end
+		if not Health.flailEnabled then
+			return -- 땡깡 끔: 순수 래그돌 (물리에 맡김)
+		end
 		-- 땡깡: 팔다리를 각자 축으로 앞뒤로 크게 휘두름 (박자 엇갈림), 끝으로 갈수록 지침
 		local fade = 1 - 0.25 * (t / Health.flailTime)
 		local w = 2 * math.pi * Health.flailRate
