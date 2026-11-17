@@ -77,18 +77,26 @@ local function explode(model: Model, frozen: { BasePart }?, savedVel: Vector3?)
 	local vehicleId = model:GetAttribute("VehicleId")
 	local safe = getInfo(model).safeCFrame
 
-	-- 0) 좌석 전부 비활성화: 동승석은 닿으면 앉는 방식이라, 날아가는 좌석 파편에 다시 앉아버리는 것 방지
+	-- 0) 탄 사람 목록을 "먼저" 확보 (좌석을 끄면 로블록스가 바로 내려버려서 목록이 비어버림)
+	local riders: { { hum: Humanoid, seat: BasePart } } = {}
+	for _, seat in model:GetDescendants() do
+		if seat:IsA("Seat") and seat.Occupant then
+			table.insert(riders, { hum = seat.Occupant, seat = seat })
+		end
+	end
+	-- 그 다음 좌석 전부 비활성화: 날아가는 좌석 파편에 다시 앉아버리는 것 방지
 	for _, seat in model:GetDescendants() do
 		if seat:IsA("Seat") then
-			seat.Disabled = true
 			seat.CanTouch = false
+			seat.Disabled = true
 		end
 	end
 
 	-- 1) 탄 사람 전부 내리고 래그돌로 날리기
-	for _, hum in occupantsOf(model) do
+	for _, r in riders do
+		local hum = r.hum
 		-- 운전석/동승석 모두 "자동으로 내림" 판정: 좌석 연결 끊고, 차 몸통에 안 걸리게 살짝 위로 빼냄
-		local seat = hum.SeatPart
+		local seat = r.seat
 		local weld = seat and seat:FindFirstChild("SeatWeld")
 		if weld then
 			weld:Destroy()
