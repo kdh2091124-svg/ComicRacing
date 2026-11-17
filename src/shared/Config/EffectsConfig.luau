@@ -13,6 +13,7 @@ EffectsConfig.Textures = {
 EffectsConfig.Sounds = {
 	scrape = "", -- 벽 긁는 소리 "끼리리릭" (반복 재생)
 	explosion = "", -- 폭발 "펑"
+	tick = "", -- 폭발 직전 "틱"
 }
 
 EffectsConfig.maxDistance = 400 -- 카메라에서 이보다 먼 차는 이펙트 끔 (성능)
@@ -46,6 +47,15 @@ EffectsConfig.Explosion = {
 	shakeDistance = 110,
 	shockwaveSize = 45, -- 충격파 최대 크기 (스터드)
 	shockwaveTime = 0.35, -- 충격파 퍼지는 시간 (초)
+	-- 1단계 "틱"
+	tickFlashTime = 0.18, -- 차가 하얗게 번쩍하는 시간
+	tickScreenFlash = 0.35, -- 탄 사람 화면 하얘지는 정도 (0~1)
+	tickScreenRadius = 35, -- 이 거리 안이면 화면 번쩍
+	boomScreenFlash = 0.6, -- "파앙" 순간 화면 하얘지는 정도
+	-- 파편 불꼬리
+	maxDebrisTrails = 20,
+	debrisTrailLifetime = 0.5, -- 꼬리 길이 (초)
+	debrisTrailTime = 1.5, -- 꼬리가 나오는 시간
 }
 EffectsConfig.slideSkidAngle = 14 -- 드리프트 아니어도 이 각도 이상 미끄러지면 스키드 마크
 

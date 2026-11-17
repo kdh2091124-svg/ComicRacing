@@ -636,8 +636,118 @@ function VehicleEffects.PlayDriftBurst(model: Model)
 	end
 end
 
+-- 화면 전체 하얗게 번쩍 (내 화면)
+local flashGui: ScreenGui? = nil
+local function screenFlash(strength: number, duration: number)
+	if not flashGui or not flashGui.Parent then
+		local sg = Instance.new("ScreenGui")
+		sg.Name = "ScreenFlash"
+		sg.IgnoreGuiInset = true
+		sg.ResetOnSpawn = false
+		sg.DisplayOrder = 50
+		local f = Instance.new("Frame")
+		f.Name = "White"
+		f.Size = UDim2.fromScale(1, 1)
+		f.BackgroundColor3 = Color3.new(1, 1, 1)
+		f.BackgroundTransparency = 1
+		f.BorderSizePixel = 0
+		f.Parent = sg
+		sg.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
+		flashGui = sg
+	end
+	local frame = (flashGui :: ScreenGui):FindFirstChild("White") :: Frame
+	frame.BackgroundTransparency = 1 - strength
+	TweenService:Create(frame, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 }):Play()
+end
+
+-- 내가 이 차에 타고 있거나 아주 가까운지
+local function isNearMe(model: Model?, pos: Vector3, radius: number): boolean
+	local char = Players.LocalPlayer.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if hum and hum.SeatPart and model and hum.SeatPart:IsDescendantOf(model) then
+		return true
+	end
+	local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+	return root ~= nil and (root.Position - pos).Magnitude < radius
+end
+
+-- 1단계 "틱": 차가 하얗게 번쩍 + (탄 사람/가까운 사람) 화면 살짝 하얗게
+function VehicleEffects.PlayPreExplosion(model: Model, pos: Vector3)
+	local E = FX.Explosion
+	if model and model.Parent then
+		local h = Instance.new("Highlight")
+		h.FillColor = Color3.new(1, 1, 1)
+		h.OutlineColor = Color3.new(1, 1, 1)
+		h.FillTransparency = 0.1
+		h.OutlineTransparency = 0
+		h.DepthMode = Enum.HighlightDepthMode.Occluded
+		h.Parent = model
+		Debris:AddItem(h, E.tickFlashTime)
+	end
+	if isNearMe(model, pos, E.tickScreenRadius) then
+		screenFlash(E.tickScreenFlash, E.tickFlashTime + 0.1)
+	end
+	if FX.Sounds.tick ~= "" then
+		local s = Instance.new("Sound")
+		s.SoundId = FX.Sounds.tick
+		s.Parent = model and model.PrimaryPart or workspace
+		s:Play()
+		Debris:AddItem(s, 2)
+	end
+end
+
+-- 날아가는 파편마다 불꼬리 (Trail)
+local function addDebrisTrails(model: Model)
+	local E = FX.Explosion
+	local count = 0
+	for _, p in model:GetDescendants() do
+		if p:IsA("BasePart") and p.Transparency < 1 and count < E.maxDebrisTrails then
+			count += 1
+			local half = math.max(p.Size.X, p.Size.Y, p.Size.Z) * 0.3
+			local a0 = Instance.new("Attachment")
+			a0.Position = Vector3.new(0, half, 0)
+			a0.Parent = p
+			local a1 = Instance.new("Attachment")
+			a1.Position = Vector3.new(0, -half, 0)
+			a1.Parent = p
+			local t = Instance.new("Trail")
+			t.Attachment0 = a0
+			t.Attachment1 = a1
+			t.FaceCamera = true
+			t.Lifetime = E.debrisTrailLifetime
+			t.MinLength = 0.05
+			t.LightEmission = 0.8
+			t.LightInfluence = 0
+			t.Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 230, 150)),
+				ColorSequenceKeypoint.new(0.25, Color3.fromRGB(255, 120, 30)),
+				ColorSequenceKeypoint.new(1, Color3.fromRGB(70, 60, 60)),
+			})
+			t.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0),
+				NumberSequenceKeypoint.new(0.5, 0.4),
+				NumberSequenceKeypoint.new(1, 1),
+			})
+			t.WidthScale = NumberSequence.new(1, 0.3)
+			t.Parent = p
+			-- 꼬리는 1.5초 뒤 서서히 꺼짐
+			task.delay(E.debrisTrailTime, function()
+				if t.Parent then
+					t.Enabled = false
+				end
+			end)
+		end
+	end
+end
+
 -- 대폭발: 큰 불덩이 + 검은 연기 + 불똥 + 번쩍 (모두 화면)
-function VehicleEffects.PlayExplosion(pos: Vector3)
+function VehicleEffects.PlayExplosion(pos: Vector3, model: Model?)
+	if model and model.Parent then
+		addDebrisTrails(model)
+	end
+	if isNearMe(model, pos, FX.Explosion.tickScreenRadius) then
+		screenFlash(FX.Explosion.boomScreenFlash, 0.5)
+	end
 	local cam = workspace.CurrentCamera
 	if (pos - cam.CFrame.Position).Magnitude > FX.maxDistance * 1.5 then
 		return
@@ -778,8 +888,10 @@ function VehicleEffects.Start()
 	VehicleFX.OnClientEvent:Connect(function(kind, model, pos, strength)
 		if kind == "Impact" and typeof(model) == "Instance" and model:IsA("Model") and typeof(pos) == "Vector3" then
 			VehicleEffects.PlayImpact(model, pos, type(strength) == "number" and strength or 1)
+		elseif kind == "PreExplode" and typeof(pos) == "Vector3" then
+			VehicleEffects.PlayPreExplosion(typeof(model) == "Instance" and model or nil, pos)
 		elseif kind == "Explode" and typeof(pos) == "Vector3" then
-			VehicleEffects.PlayExplosion(pos)
+			VehicleEffects.PlayExplosion(pos, typeof(model) == "Instance" and model or nil)
 		end
 	end)
 	RunService.RenderStepped:Connect(update)

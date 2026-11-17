@@ -171,12 +171,24 @@ function HealthService.Damage(model: Model, amount: number)
 	model:SetAttribute("HP", hp)
 	getInfo(model).lastDamage = os.clock()
 	if hp <= 0 then
-		explode(model)
+		HealthService.Explode(model)
 	end
 end
 
+-- 2단 폭발: "틱" (차가 하얗게 번쩍 + 화면 살짝 하얗게) → tickDelay 뒤 "파아앙"
 function HealthService.Explode(model: Model)
-	explode(model)
+	if model:GetAttribute("Exploding") or model:GetAttribute("Exploded") then
+		return
+	end
+	model:SetAttribute("Exploding", true)
+	model:SetAttribute("HP", 0)
+	local chassis = model.PrimaryPart
+	VehicleFX:FireAllClients("PreExplode", model, chassis and chassis.Position or Vector3.zero)
+	task.delay(Health.tickDelay, function()
+		if model.Parent then
+			explode(model)
+		end
+	end)
 end
 
 function HealthService.Start(vehiclesFolder: Folder, respawn: (Player, string, CFrame) -> Model?)
