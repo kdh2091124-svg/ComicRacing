@@ -6,6 +6,7 @@ local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 
 local InputState = require(script.Parent.InputState)
+local TrialConfig = require(game:GetService("ReplicatedStorage").Shared.Config.GameplayConfig).Trial
 
 local MobileControls = {}
 
@@ -35,6 +36,9 @@ local function build(): ScreenGui
 
 	for _, item in LAYOUT do
 		local action, text, ax, ay, pos, size, kind = table.unpack(item)
+		if action == "Restart" and not TrialConfig.enabled then
+			continue -- 트라이얼 꺼져 있으면 "재시작" 버튼 숨김
+		end
 		local b = Instance.new("TextButton")
 		b.Name = action
 		b.Text = text

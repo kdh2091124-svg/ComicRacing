@@ -173,6 +173,7 @@ GameplayConfig.Health = {
 
 -- 트라이얼 (혼자 기록 경쟁)
 GameplayConfig.Trial = {
+	enabled = false, -- 지금은 꺼둠 (오픈월드 먼저, 레이스는 나중에). 켜면 트라이얼 게이트/구간 기록/고스트 부활
 	restartBehindStart = 18, -- Backspace 재시작 시 출발선 뒤 몇 스터드에 놓을지
 	respawnHeight = 3, -- 복귀 시 땅 위 높이
 	fallY = -30, -- 이 높이 아래로 떨어지면 자동 복귀

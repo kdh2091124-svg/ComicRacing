@@ -124,6 +124,10 @@ local function onCheckpoint(player: Player, index: any)
 	Trial:FireClient(player, "Split", index, t, delta)
 end
 
+if not TrialConfig.enabled then
+	return -- 트라이얼 꺼짐 (GameplayConfig.Trial.enabled)
+end
+
 Trial.OnServerEvent:Connect(function(player: Player, action: any, a: any)
 	if action == "Start" then
 		onStart(player, a)

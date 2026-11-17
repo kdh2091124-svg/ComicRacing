@@ -135,7 +135,9 @@ function TrialClient.OnKey(action: string)
 	if not model then
 		return
 	end
-	if action == "Restart" then
+	if action == "Restart" and not TrialConfig.enabled then
+		return -- 트라이얼 꺼짐: Backspace 아무 동작 없음
+	elseif action == "Restart" then
 		local course = state.course or state.lastCourse
 		if not course then
 			return
@@ -181,6 +183,9 @@ end
 -- ===== 매 프레임 (운전 중) =====
 function TrialClient.Step(model: Model, chassis: BasePart, _dt: number)
 	state.model = model
+	if not TrialConfig.enabled then
+		return -- 트라이얼 꺼짐: 출발선/체크포인트 판정 안 함 (R 차 세우기만 동작)
+	end
 	local p1 = chassis.Position
 	local p0 = state.prevPos
 	state.prevPos = p1

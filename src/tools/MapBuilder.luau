@@ -577,6 +577,42 @@ local function addTrialExtras(map: Instance)
 	return added
 end
 
+-- 코스(출발 게이트, 초록 체크포인트 벽, 코너 표지판)를 맵에서 치우기 / 다시 꺼내기 (Studio 명령줄)
+--   require(game.ServerStorage.Tools.MapBuilder).HideCourses()
+--   require(game.ServerStorage.Tools.MapBuilder).ShowCourses()
+-- 지우지 않고 ServerStorage.HiddenCourses 로 옮겨만 둠 (레이스 만들 때 다시 꺼냄)
+function MapBuilder.HideCourses()
+	local map = workspace:FindFirstChild("Map")
+	local courses = map and map:FindFirstChild("Courses")
+	if not courses then
+		warn("[MapBuilder] Workspace.Map.Courses 가 없어요 (이미 치웠을 수도)")
+		return
+	end
+	local recording = ChangeHistoryService:TryBeginRecording("MapBuilder.HideCourses")
+	courses.Name = "HiddenCourses"
+	courses.Parent = game:GetService("ServerStorage")
+	if recording then
+		ChangeHistoryService:FinishRecording(recording, Enum.FinishRecordingOperation.Commit)
+	end
+	print("[MapBuilder] 코스를 ServerStorage.HiddenCourses 로 옮겼어요 (지운 게 아님)")
+end
+
+function MapBuilder.ShowCourses()
+	local hidden = game:GetService("ServerStorage"):FindFirstChild("HiddenCourses")
+	local map = workspace:FindFirstChild("Map")
+	if not hidden or not map then
+		warn("[MapBuilder] 치워둔 코스가 없거나 Workspace.Map 이 없어요")
+		return
+	end
+	local recording = ChangeHistoryService:TryBeginRecording("MapBuilder.ShowCourses")
+	hidden.Name = "Courses"
+	hidden.Parent = map
+	if recording then
+		ChangeHistoryService:FinishRecording(recording, Enum.FinishRecordingOperation.Commit)
+	end
+	print("[MapBuilder] 코스를 다시 맵에 꺼냈어요")
+end
+
 -- 이미 만든 맵에 트라이얼 요소만 덧붙이기 (Studio 명령줄):
 --   require(game.ServerStorage.Tools.MapBuilder).AddTrialExtras()
 function MapBuilder.AddTrialExtras()
