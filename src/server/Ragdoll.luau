@@ -53,6 +53,16 @@ local function startMotion(char: Model, fling: Vector3)
 	local tumbleAxis = flat.Magnitude > 1 and Vector3.yAxis:Cross(flat.Unit) or Vector3.xAxis
 	local tumble = tumbleAxis * Health.bodySpin
 
+	-- 팔다리마다 랜덤 방향으로 세게 한 번 "촥" 돌림 (발사 순간에만, 그 뒤론 완전히 풀린 관절로 물리에 맡김)
+	local limbSpin: { [BasePart]: Vector3 } = {}
+	for _, limb in limbs do
+		local dir = Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5)
+		if dir.Magnitude < 0.05 then
+			dir = Vector3.xAxis
+		end
+		limbSpin[limb] = dir.Unit * Health.limbKick * (0.7 + math.random() * 0.6)
+	end
+
 	local function launch()
 		local done: { [BasePart]: boolean } = {}
 		for _, p in all do
@@ -60,7 +70,7 @@ local function startMotion(char: Model, fling: Vector3)
 			if not done[root] then
 				done[root] = true
 				root.AssemblyLinearVelocity = fling
-				root.AssemblyAngularVelocity = tumble
+				root.AssemblyAngularVelocity = limbSpin[root] or tumble
 			end
 		end
 	end
@@ -118,8 +128,8 @@ function Ragdoll.Enable(player: Player, fling: Vector3)
 		ball.Name = TAG
 		ball.Attachment0 = a0
 		ball.Attachment1 = a1
-		ball.LimitsEnabled = true
-		ball.TwistLimitsEnabled = true
+		ball.LimitsEnabled = false -- 관절 완전히 풀기 (흐물흐물, 어느 방향이든 꺾임)
+		ball.TwistLimitsEnabled = false
 		ball.UpperAngle = 130 -- 크게 꺾여야 휘적거림이 우스꽝스럽게 보임
 		ball.TwistLowerAngle = -110
 		ball.TwistUpperAngle = 110

@@ -160,6 +160,7 @@ GameplayConfig.Health = {
 	debrisUp = 100, -- 차 조각 위로 튀는 속도
 	chassisLaunch = 100,
 	-- 날아가는 동안 팔다리 땡깡 휘적휘적
+	limbKick = 45, -- 날아가는 순간 팔다리를 랜덤 방향으로 한 번 촥 돌리는 세기 (라디안/초)
 	flailEnabled = false, -- 땡깡 휘적거리기 (false = 순수 래그돌만). 다시 켜려면 true
 	flailTime = 2.5, -- 휘적거리는 시간 (초)
 	flailSpeed = 50, -- 팔다리 휘두르는 세기 (우스꽝스럽게 세게)
