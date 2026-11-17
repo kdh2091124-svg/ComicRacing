@@ -49,7 +49,7 @@ EffectsConfig.Explosion = {
 	shockwaveTime = 0.35, -- 충격파 퍼지는 시간 (초)
 	-- 1단계 "틱"
 	tickFlashTime = 0.18, -- 차가 하얗게 번쩍하는 시간
-	tickScreenFlash = 0.35, -- 탄 사람 화면 하얘지는 정도 (0~1)
+	tickScreenFlash = 0.55, -- 정지 중 화면 하얘지는 정도 (0~1)
 	tickScreenRadius = 35, -- 이 거리 안이면 화면 번쩍
 	boomScreenFlash = 0.6, -- "파앙" 순간 화면 하얘지는 정도
 	-- 파편 불꼬리

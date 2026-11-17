@@ -54,19 +54,25 @@ local function occupantsOf(model: Model): { Humanoid }
 	return list
 end
 
-local function explode(model: Model)
+local function explode(model: Model, frozen: { BasePart }?, savedVel: Vector3?)
 	if model:GetAttribute("Exploded") then
 		return
 	end
 	model:SetAttribute("Exploded", true)
 	model:SetAttribute("HP", 0)
+	-- 정지(히트스톱) 풀기
+	for _, p in frozen or {} do
+		if p.Parent then
+			p.Anchored = false
+		end
+	end
 	local chassis = model.PrimaryPart
 	if not chassis then
 		model:Destroy()
 		return
 	end
 	local pos = chassis.Position
-	local carVel = chassis.AssemblyLinearVelocity
+	local carVel = savedVel or chassis.AssemblyLinearVelocity
 	local ownerId = model:GetAttribute("OwnerUserId")
 	local vehicleId = model:GetAttribute("VehicleId")
 	local safe = getInfo(model).safeCFrame
@@ -180,13 +186,37 @@ function HealthService.Explode(model: Model)
 	if model:GetAttribute("Exploding") or model:GetAttribute("Exploded") then
 		return
 	end
-	model:SetAttribute("Exploding", true)
+	model:SetAttribute("Exploding", true) -- 이 동안 못 내림 (VehicleService 가 검사)
 	model:SetAttribute("HP", 0)
 	local chassis = model.PrimaryPart
-	VehicleFX:FireAllClients("PreExplode", model, chassis and chassis.Position or Vector3.zero)
+	local savedVel = chassis and chassis.AssemblyLinearVelocity or Vector3.zero
+
+	-- 히트스톱: 박은 그 순간 차 + 탄 사람 전부 그 자리에 "정지"
+	local frozen: { BasePart } = {}
+	for _, p in model:GetDescendants() do
+		if p:IsA("BasePart") and not p.Anchored then
+			p.Anchored = true
+			table.insert(frozen, p)
+		end
+	end
+	for _, hum in occupantsOf(model) do
+		local root = hum.Parent and hum.Parent:FindFirstChild("HumanoidRootPart")
+		if root and root:IsA("BasePart") and not root.Anchored then
+			root.Anchored = true
+			table.insert(frozen, root)
+		end
+	end
+
+	VehicleFX:FireAllClients("PreExplode", model, chassis and chassis.Position or Vector3.zero, Health.tickDelay)
 	task.delay(Health.tickDelay, function()
 		if model.Parent then
-			explode(model)
+			explode(model, frozen, savedVel)
+		else
+			for _, p in frozen do
+				if p.Parent then
+					p.Anchored = false
+				end
+			end
 		end
 	end)
 end

@@ -638,6 +638,7 @@ end
 
 -- 화면 전체 하얗게 번쩍 (내 화면)
 local flashGui: ScreenGui? = nil
+local flashTween: Tween? = nil
 local function screenFlash(strength: number, duration: number)
 	if not flashGui or not flashGui.Parent then
 		local sg = Instance.new("ScreenGui")
@@ -656,8 +657,29 @@ local function screenFlash(strength: number, duration: number)
 		flashGui = sg
 	end
 	local frame = (flashGui :: ScreenGui):FindFirstChild("White") :: Frame
+	if flashTween then
+		flashTween:Cancel()
+		flashTween = nil
+	end
 	frame.BackgroundTransparency = 1 - strength
-	TweenService:Create(frame, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 }):Play()
+	if duration > 0 then
+		flashTween = TweenService:Create(frame, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 })
+		flashTween:Play()
+	end
+end
+
+-- 화면을 하얗게 유지 (다음 screenFlash 가 올 때까지). 안 오면 maxTime 뒤 알아서 사라짐
+local holdToken = 0
+local function screenHold(strength: number, maxTime: number)
+	screenFlash(strength, 0) -- 만들기 + 그 밝기로 고정 (사라지지 않음)
+	holdToken += 1
+	local my = holdToken
+	task.delay(maxTime, function()
+		-- 콰앙(screenFlash)이 안 왔으면 알아서 사라짐
+		if my == holdToken and flashTween == nil then
+			screenFlash(strength, 0.3)
+		end
+	end)
 end
 
 -- 내가 이 차에 타고 있거나 아주 가까운지
@@ -672,8 +694,9 @@ local function isNearMe(model: Model?, pos: Vector3, radius: number): boolean
 end
 
 -- 1단계 "틱": 차가 하얗게 번쩍 + (탄 사람/가까운 사람) 화면 살짝 하얗게
-function VehicleEffects.PlayPreExplosion(model: Model, pos: Vector3)
+function VehicleEffects.PlayPreExplosion(model: Model, pos: Vector3, freezeTime: number?)
 	local E = FX.Explosion
+	local hold = freezeTime or E.tickFlashTime
 	if model and model.Parent then
 		local h = Instance.new("Highlight")
 		h.FillColor = Color3.new(1, 1, 1)
@@ -682,10 +705,11 @@ function VehicleEffects.PlayPreExplosion(model: Model, pos: Vector3)
 		h.OutlineTransparency = 0
 		h.DepthMode = Enum.HighlightDepthMode.Occluded
 		h.Parent = model
-		Debris:AddItem(h, E.tickFlashTime)
+		Debris:AddItem(h, hold)
 	end
 	if isNearMe(model, pos, E.tickScreenRadius) then
-		screenFlash(E.tickScreenFlash, E.tickFlashTime + 0.1)
+		-- 정지하는 동안 화면을 하얗게 "멈춘 것처럼" 유지 → 콰앙 순간 번쩍 후 사라짐
+		screenHold(E.tickScreenFlash, hold + 0.6)
 	end
 	if FX.Sounds.tick ~= "" then
 		local s = Instance.new("Sound")
@@ -889,7 +913,7 @@ function VehicleEffects.Start()
 		if kind == "Impact" and typeof(model) == "Instance" and model:IsA("Model") and typeof(pos) == "Vector3" then
 			VehicleEffects.PlayImpact(model, pos, type(strength) == "number" and strength or 1)
 		elseif kind == "PreExplode" and typeof(pos) == "Vector3" then
-			VehicleEffects.PlayPreExplosion(typeof(model) == "Instance" and model or nil, pos)
+			VehicleEffects.PlayPreExplosion(typeof(model) == "Instance" and model or nil, pos, type(strength) == "number" and strength or nil)
 		elseif kind == "Explode" and typeof(pos) == "Vector3" then
 			VehicleEffects.PlayExplosion(pos, typeof(model) == "Instance" and model or nil)
 		end

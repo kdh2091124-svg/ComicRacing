@@ -271,6 +271,9 @@ local function exitVehicle(player: Player)
 	local seat = hum.SeatPart
 	local model = vehicleOfSeat(seat)
 	-- 달리는 중엔 못 내림 (속도를 줄이면 내릴 수 있음)
+	if model and model:GetAttribute("Exploding") then
+		return -- 터지기 직전 정지 중엔 못 내림
+	end
 	if model and model.PrimaryPart and not model:GetAttribute("Exploded") then
 		local speed = model.PrimaryPart.AssemblyLinearVelocity.Magnitude
 		if speed > GameplayConfig.Vehicle.exitMaxSpeed then
