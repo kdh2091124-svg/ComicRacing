@@ -1,0 +1,4 @@
+# Rokit 도구 목록. 이 폴더에서 `rokit install` 하면 아래 버전이 설치됩니다.
+
+[tools]
+rojo = "rojo-rbx/rojo@7.7.1"

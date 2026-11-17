@@ -1,0 +1,11 @@
+# Rojo 빌드 결과물
+/build/
+sourcemap.json
+
+# Roblox Studio 잠금 파일
+*.rbxl.lock
+*.rbxlx.lock
+
+# OS / 에디터
+.DS_Store
+Thumbs.db
