@@ -38,29 +38,41 @@ local function setOwner(char: Model, owner: Player?)
 	end
 end
 
--- 날아가는 동안 매 프레임: 플링 꺾임 + 몸 회전 + 팔다리 땡깡
+-- 날리기: 처음 한 번 깔끔하게 (위 + 달리던 방향 뒤쪽) + 뒤로 공중제비 회전 → 나머진 물리에 맡김 (자연스러운 포물선)
+-- 날아가는 동안엔 팔다리만 박자 맞춰 휘두름 (땡깡). 몸통 궤적은 건드리지 않음.
 local function startMotion(char: Model, fling: Vector3)
 	local all = parts(char)
-	local limbs, body = {}, {}
+	local limbs = {}
 	for _, p in all do
 		if isLimb(p.Name) then
 			table.insert(limbs, p)
-		else
-			table.insert(body, p)
 		end
 	end
-	-- 처음 한 번 + 몇 프레임 더 밀어줌
-	local function push(v: Vector3)
+	-- 뒤로 도는 공중제비 축 (날아가는 수평 방향에 수직)
+	local flat = Vector3.new(fling.X, 0, fling.Z)
+	local tumbleAxis = flat.Magnitude > 1 and Vector3.yAxis:Cross(flat.Unit) or Vector3.xAxis
+	local tumble = tumbleAxis * Health.bodySpin
+
+	local function launch()
+		local done: { [BasePart]: boolean } = {}
 		for _, p in all do
-			local jitter = Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5) * 10
-			p.AssemblyLinearVelocity = v + jitter
+			local root = p.AssemblyRootPart or p
+			if not done[root] then
+				done[root] = true
+				root.AssemblyLinearVelocity = fling
+				root.AssemblyAngularVelocity = tumble
+			end
 		end
 	end
-	push(fling)
+	launch()
 
 	local t0 = os.clock()
-	local nextWobble = Health.wobbleInterval
 	local frames = 0
+	local phases = {}
+	for i = 1, #limbs do
+		phases[i] = (i % 2 == 0) and math.pi or 0 -- 왼쪽/오른쪽 엇갈려 휘두르기
+		phases[i] += math.random() * 0.8
+	end
 	local conn
 	conn = RunService.Heartbeat:Connect(function()
 		frames += 1
@@ -70,43 +82,18 @@ local function startMotion(char: Model, fling: Vector3)
 			active[char] = nil
 			return
 		end
-		if frames <= 3 then
-			push(fling)
+		-- 관절이 풀리는 타이밍 차이 대비: 처음 2프레임만 다시 발사
+		if frames <= 2 then
+			launch()
 		end
-		local fade = 1 - 0.6 * (t / Health.flailTime)
-
-		-- 플링 궤적: 일정 간격으로 방향이 확 꺾임 (몸 전체에 같은 속도 → 통째로 꺾임)
-		if t >= nextWobble then
-			nextWobble += Health.wobbleInterval * (0.6 + math.random() * 0.8)
-			-- 거의 옆으로만 꺾임 (위로 계속 더해지면 우주까지 날아감)
-			local a = math.random() * math.pi * 2
-			local kick = Vector3.new(math.cos(a), (math.random() - 0.5) * 0.3, math.sin(a)) * Health.wobbleKick * fade
-			-- 한 덩어리(Assembly)에 한 번만 더함 (안 그러면 붙어 있는 파트 수만큼 곱해져서 날아가버림)
-			local done: { [BasePart]: boolean } = {}
-			for _, p in all do
-				local root = p.AssemblyRootPart or p
-				if not done[root] then
-					done[root] = true
-					local v = root.AssemblyLinearVelocity + kick
-					-- 위로 올라가는 속도는 처음 날린 것보다 커지지 않게
-					root.AssemblyLinearVelocity = Vector3.new(v.X, math.min(v.Y, fling.Y), v.Z)
-				end
-			end
-		end
-		-- 몸통 빙글빙글
-		local spin = Vector3.new(math.noise(t * 2, 7, 0), math.noise(0, t * 2, 7), math.noise(7, 0, t * 2))
-			* Health.bodySpin * 2 * fade
-		for _, p in body do
-			p.AssemblyAngularVelocity = spin
-		end
-		-- 팔다리 땡깡 (부위마다 따로, 아주 빠르게)
-		local f = t * Health.flailRate
+		-- 땡깡: 팔다리를 각자 축으로 앞뒤로 크게 휘두름 (박자 엇갈림), 끝으로 갈수록 지침
+		local fade = 1 - 0.5 * (t / Health.flailTime)
+		local w = 2 * math.pi * Health.flailRate
 		for i, limb in limbs do
-			limb.AssemblyAngularVelocity = Vector3.new(
-				math.noise(f, i * 1.7, 0),
-				math.noise(i * 2.3, f, 0),
-				math.noise(0, i * 3.1, f)
-			) * Health.flailSpeed * 2 * fade
+			local swing = math.sin(w * t + phases[i])
+			local axis = limb.CFrame.RightVector
+			local wobble = limb.CFrame.LookVector * math.sin(w * 0.7 * t + phases[i] * 1.3) * 0.4
+			limb.AssemblyAngularVelocity = (axis * swing + wobble) * Health.flailSpeed * fade
 		end
 	end)
 	active[char] = conn

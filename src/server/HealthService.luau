@@ -73,6 +73,10 @@ local function explode(model: Model, frozen: { BasePart }?, savedVel: Vector3?)
 	end
 	local pos = chassis.Position
 	local carVel = savedVel or chassis.AssemblyLinearVelocity
+	-- 달리던 방향의 반대 (수평). 멈춰 있었으면 차 뒤쪽
+	local flatVel = Vector3.new(carVel.X, 0, carVel.Z)
+	local backDir = flatVel.Magnitude > 5 and -flatVel.Unit
+		or -(chassis.CFrame.LookVector * Vector3.new(1, 0, 1)).Unit
 	local ownerId = model:GetAttribute("OwnerUserId")
 	local vehicleId = model:GetAttribute("VehicleId")
 	local safe = getInfo(model).safeCFrame
@@ -108,10 +112,10 @@ local function explode(model: Model, frozen: { BasePart }?, savedVel: Vector3?)
 		end
 		local player = Players:GetPlayerFromCharacter(hum.Parent)
 		if player then
-			-- 차 몸통과 같이 하늘로 (차 발사 방향 + 약간 옆으로 랜덤)
+			-- 달리던 방향의 반대(뒤쪽)로 + 위로 + 약간 옆으로 랜덤
+			local back = backDir * Health.flingBack
 			local a = math.random() * math.pi * 2
-			local fling = carVel * 0.3
-				+ Vector3.new(math.cos(a) * Health.flingSide, Health.flingUp, math.sin(a) * Health.flingSide)
+			local fling = back + Vector3.new(math.cos(a) * Health.flingSide, Health.flingUp, math.sin(a) * Health.flingSide)
 			Ragdoll.Enable(player, fling)
 		end
 	end
@@ -150,13 +154,13 @@ local function explode(model: Model, frozen: { BasePart }?, savedVel: Vector3?)
 				end
 				dir = (dir * Vector3.new(1, 0, 1) + Vector3.new(0, 0.001, 0)).Unit
 				local up = Health.debrisUp * (0.7 + math.random() * 0.6)
-				p.AssemblyLinearVelocity = carVel * 0.3 + dir * Health.debrisSpeed * (0.6 + math.random() * 0.8) + Vector3.new(0, up, 0)
+				p.AssemblyLinearVelocity = backDir * Health.flingBack * 0.5 + dir * Health.debrisSpeed * (0.6 + math.random() * 0.8) + Vector3.new(0, up, 0)
 				p.AssemblyAngularVelocity = Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5) * 30
 			end
 		end
 	end
 	-- 차체(몸통)는 하늘로 크게 튀어오르며 빙글빙글
-	chassis.AssemblyLinearVelocity = carVel * 0.3 + Vector3.new(0, Health.chassisLaunch, 0)
+	chassis.AssemblyLinearVelocity = backDir * Health.flingBack * 0.7 + Vector3.new(0, Health.chassisLaunch, 0)
 	chassis.AssemblyAngularVelocity = Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5) * 18
 	model.Name = model.Name .. "_Wreck"
 	Debris:AddItem(model, Health.debrisTime)
