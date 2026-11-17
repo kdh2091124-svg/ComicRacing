@@ -5,12 +5,15 @@
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local ContextActionService = game:GetService("ContextActionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StatCalculator = require(Shared:WaitForChild("StatCalculator"))
 local Physics = require(Shared.Config.GameplayConfig).Physics
 local CamConfig = require(Shared.Config.GameplayConfig).Camera
+local HealthConfig = require(Shared.Config.GameplayConfig).Health
+local InputConfig = require(Shared.Config.InputConfig)
 
 local InputState = require(script.Parent:WaitForChild("InputState"))
 local ChaseCamera = require(script.Parent:WaitForChild("ChaseCamera"))
@@ -87,6 +90,9 @@ local session: {
 	fxBoost: boolean,
 	prevVel: Vector3,
 	lastImpact: number,
+	lastDamage: number,
+	lastHazard: number,
+	prevPos: Vector3?,
 	topSpeed: number,
 	boost: number,
 	flippedTime: number,
@@ -386,6 +392,7 @@ local function step(dt: number)
 	-- 드리프트 중엔 타이어 옆 힘 대신 아래 "카툰 미끄러짐" 이 차를 조종
 	-- 타이어 그립도 풀릴 때 서서히 (제곱근 → 블렌드가 꽤 내려가야 그립이 붙음)
 	local tireLatMul = 1 - D.tireLatCut * math.sqrt(s.driftBlend)
+	local onLava = false
 	-- 드리프트 끝난 뒤 그립 회복: recoverTime 동안 옆 그립이 recoverMinGrip → 100% 로 천천히 돌아옴
 	-- (한 번에 돌아오면 차가 진행 방향으로 "억지로 확" 잡힘)
 	if wantDrift then
@@ -404,6 +411,9 @@ local function step(dt: number)
 		local result = workspace:Raycast(origin, -up * rayLen, s.params)
 		if result then
 			grounded += 1
+			if result.Instance:GetAttribute("Hazard") == "Lava" then
+				onLava = true
+			end
 			local compression = rayLen - result.Distance
 			local contact = result.Position
 			local pointVel = vel + angVel:Cross(contact - com)
@@ -650,10 +660,14 @@ local function step(dt: number)
 		VehicleFX:FireServer("State", fxDrift, tier, fxBoost)
 	end
 
-	-- 충돌 스파크: 속도가 갑자기 확 바뀌면 (벽에 박음, 세게 착지)
+	-- 순간이동(재시작/복귀/뒤집힘 복구) 직후엔 충돌로 치지 않음
 	local now = os.clock()
+	local teleported = s.prevPos ~= nil and (chassis.Position - s.prevPos).Magnitude > math.max(flatSpeed * dt * 3, 30)
+	s.prevPos = chassis.Position
+
+	-- 충돌 스파크: 속도가 갑자기 확 바뀌면 (벽에 박음, 세게 착지)
 	local hitAccel = (vel - s.prevVel).Magnitude / math.max(dt, 1 / 240)
-	if hitAccel > EffectsConfig.impactAccel and s.prevVel.Magnitude > EffectsConfig.impactMinSpeed and now - s.lastImpact > 0.25 then
+	if not teleported and hitAccel > EffectsConfig.impactAccel and s.prevVel.Magnitude > EffectsConfig.impactMinSpeed and now - s.lastImpact > 0.25 then
 		s.lastImpact = now
 		local dir = s.prevVel.Unit
 		local hitPos = chassis.Position + dir * (chassis.Size.Z / 2) - up * (chassis.Size.Y / 2)
@@ -661,7 +675,26 @@ local function step(dt: number)
 		VehicleEffects.PlayImpact(s.model, hitPos, strength)
 		VehicleFX:FireServer("Impact", hitPos, strength)
 	end
+
+	-- 충돌 데미지: 한 프레임 속도 변화가 클수록 (정면 꽈앙 > 착지 > 비스듬히 긁기)
+	local dv = (s.prevVel - vel).Magnitude
+	if not teleported and dv > HealthConfig.minImpactSpeed and now - s.lastDamage > 0.2 then
+		s.lastDamage = now
+		VehicleFX:FireServer("Damage", (dv - HealthConfig.minImpactSpeed) * HealthConfig.damagePerSpeed)
+		ChaseCamera.Punch(math.clamp(dv / 80, 0.3, 1.5))
+	end
 	s.prevVel = vel
+
+	-- 용암 / 물
+	if onLava and now - s.lastHazard > 0.2 then
+		s.lastHazard = now
+		VehicleFX:FireServer("Lava")
+	end
+	if chassis.Position.Y < HealthConfig.drownY and now - s.lastHazard > 1 then
+		s.lastHazard = now
+		VehicleFX:FireServer("Drown")
+	end
+	HUD.SetHP(s.model:GetAttribute("HP"), s.model:GetAttribute("MaxHP"))
 	s.topSpeed = math.max(s.topSpeed, flatSpeed)
 	HUD.Update(flatSpeed, s.boost, s.topSpeed)
 
@@ -794,6 +827,9 @@ local function startDriving(seat: Seat, hum: Humanoid)
 		fxBoost = false,
 		prevVel = chassis.AssemblyLinearVelocity,
 		lastImpact = 0,
+		lastDamage = 0,
+		lastHazard = 0,
+		prevPos = nil,
 		topSpeed = 0,
 		boost = 1,
 		flippedTime = 0,
@@ -830,17 +866,49 @@ local function startDriving(seat: Seat, hum: Humanoid)
 	HUD.SetDriving(true)
 end
 
+-- 동승자: 점프로 튕겨 나가지 않게 막고, F(또는 화면 버튼)로만 내림 (서버가 속도 검사)
+local PASSENGER_EXIT = "PassengerExit"
+local function setPassenger(hum: Humanoid, on: boolean)
+	ContextActionService:UnbindAction(PASSENGER_EXIT)
+	if on then
+		hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
+		ContextActionService:BindActionAtPriority(PASSENGER_EXIT, function(_, state)
+			if state == Enum.UserInputState.Begin then
+				VehicleAction:FireServer("Exit")
+			end
+			return Enum.ContextActionResult.Sink
+		end, false, Enum.ContextActionPriority.High.Value + 10, table.unpack(InputConfig.Press.Exit))
+		HUD.SetPassenger(true, function()
+			VehicleAction:FireServer("Exit")
+		end)
+	else
+		hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+		HUD.SetPassenger(false)
+	end
+end
+
 local function onCharacter(char: Model)
 	stopDriving()
 	local hum = char:WaitForChild("Humanoid") :: Humanoid
 	hum.Seated:Connect(function(active, seatPart)
-		if active and seatPart and seatPart:IsA("Seat") and seatPart.Name == "DriverSeat" then
+		local inVehicle = active and seatPart and seatPart:IsA("Seat")
+			and seatPart:FindFirstAncestorOfClass("Model") ~= nil
+			and (seatPart:FindFirstAncestorOfClass("Model") :: Model):GetAttribute("VehicleId") ~= nil
+		if inVehicle and seatPart.Name == "DriverSeat" then
+			setPassenger(hum, false)
 			startDriving(seatPart, hum)
+		elseif inVehicle then
+			stopDriving()
+			setPassenger(hum, true)
 		else
 			stopDriving()
+			setPassenger(hum, false)
 		end
 	end)
-	hum.Died:Connect(stopDriving)
+	hum.Died:Connect(function()
+		stopDriving()
+		setPassenger(hum, false)
+	end)
 end
 
 player.CharacterAdded:Connect(onCharacter)

@@ -5,13 +5,17 @@
 -- 상태는 모델 Attribute (FX_Drift, FX_Tier, FX_Boost) 를 읽음. 서버가 운전자 보고를 받아 설정.
 -- 텍스처는 로블록스 내장 파티클만 사용 (EffectsConfig.Textures).
 
+local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local FX = require(Shared:WaitForChild("Config"):WaitForChild("EffectsConfig"))
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local VehicleFX = Remotes:WaitForChild("VehicleFX") :: RemoteEvent
+local ChaseCamera = require(script.Parent:WaitForChild("ChaseCamera"))
 
 local VehicleEffects = {}
 
@@ -33,6 +37,13 @@ type Rig = {
 	impactAtt: Attachment,
 	impact: ParticleEmitter,
 	lastTier: number,
+	-- 벽 긁기
+	grindAtt: Attachment,
+	grindSparks: ParticleEmitter,
+	grindSound: Sound?,
+	lastMarkPos: Vector3?,
+	lastScratchPos: Vector3?,
+	scratches: number,
 }
 
 local rigs: { [Model]: Rig } = {}
@@ -309,6 +320,36 @@ local function buildRig(model: Model): Rig?
 		Orientation = Enum.ParticleOrientation.VelocityParallel,
 	})
 
+	-- 벽 긁기 불똥 (긁히는 지점으로 매 프레임 옮김, 뒤로 길게 흩날림)
+	local grindAtt = newAttachment(chassis, "FX_Grind", Vector3.zero)
+	local grindSparks = newEmitter(grindAtt, {
+		Texture = T.spark,
+		Lifetime = NumberRange.new(0.15, 0.45),
+		Speed = NumberRange.new(18, 40),
+		SpreadAngle = Vector2.new(35, 20),
+		EmissionDirection = Enum.NormalId.Back,
+		Acceleration = Vector3.new(0, -100, 0),
+		Drag = 2,
+		Size = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.4),
+			NumberSequenceKeypoint.new(1, 0),
+		}),
+		LightEmission = 1,
+		LightInfluence = 0,
+		Brightness = 3,
+		Color = glowColor(FX.Grind.sparkColor),
+		Orientation = Enum.ParticleOrientation.VelocityParallel,
+	})
+	local grindSound: Sound? = nil
+	if FX.Sounds.scrape ~= "" then
+		grindSound = Instance.new("Sound")
+		grindSound.SoundId = FX.Sounds.scrape
+		grindSound.Looped = true
+		grindSound.Volume = 0
+		grindSound.RollOffMaxDistance = 150
+		grindSound.Parent = grindAtt
+	end
+
 	local rig: Rig = {
 		model = model,
 		chassis = chassis,
@@ -320,9 +361,156 @@ local function buildRig(model: Model): Rig?
 		impactAtt = impactAtt,
 		impact = impact,
 		lastTier = -1,
+		grindAtt = grindAtt,
+		grindSparks = grindSparks,
+		grindSound = grindSound,
+		lastMarkPos = nil,
+		lastScratchPos = nil,
+		scratches = 0,
 	}
 	rigs[model] = rig
 	return rig
+end
+
+-- ===== 벽 긁기: 차 옆으로 짧게 레이를 쏴서 벽에 붙어 달리는지 봄 (모든 차, 각자 화면에서) =====
+local grindParams = RaycastParams.new()
+grindParams.FilterType = Enum.RaycastFilterType.Exclude
+local grindParamsAge = 999
+
+local fxFolder: Folder? = nil
+local function getFxFolder(): Folder
+	if not fxFolder or not fxFolder.Parent then
+		local f = Instance.new("Folder")
+		f.Name = "ClientFX"
+		f.Parent = workspace
+		fxFolder = f
+	end
+	return fxFolder :: Folder
+end
+
+local wallMarks: { BasePart } = {}
+
+local function fadeAndRemove(p: BasePart, lifetime: number)
+	TweenService:Create(p, TweenInfo.new(lifetime, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Transparency = 1 }):Play()
+	Debris:AddItem(p, lifetime + 0.1)
+end
+
+local function addWallMark(from: Vector3, to: Vector3, normal: Vector3)
+	local len = (to - from).Magnitude
+	if len < 0.2 then
+		return
+	end
+	local G = FX.Grind
+	local mid = (from + to) / 2 + normal * 0.05
+	local p = Instance.new("Part")
+	p.Name = "WallScratch"
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.CastShadow = false
+	p.Material = Enum.Material.SmoothPlastic
+	p.Color = G.wallMarkColor
+	p.Transparency = G.wallMarkTransparency
+	p.Size = Vector3.new(0.05, G.wallMarkHeight, len + 0.1)
+	p.CFrame = CFrame.lookAt(mid, to + normal * 0.05)
+	p.Parent = getFxFolder()
+	fadeAndRemove(p, G.wallMarkLifetime)
+	table.insert(wallMarks, p)
+	if #wallMarks > G.maxWallMarks then
+		local old = table.remove(wallMarks, 1)
+		if old then
+			old:Destroy()
+		end
+	end
+end
+
+local function addCarScratch(rig: Rig, side: number, localZ: number)
+	local G = FX.Grind
+	if rig.scratches >= G.maxCarScratches then
+		return
+	end
+	rig.scratches += 1
+	local chassis = rig.chassis
+	local half = chassis.Size / 2
+	local y = (math.random() - 0.5) * half.Y * 1.2
+	local z = math.clamp(localZ + (math.random() - 0.5) * 2, -half.Z + 0.5, half.Z - 0.5)
+	local s = Instance.new("Part")
+	s.Name = "CarScratch"
+	s.Anchored = false
+	s.Massless = true
+	s.CanCollide = false
+	s.CanQuery = false
+	s.CanTouch = false
+	s.CastShadow = false
+	s.Material = Enum.Material.SmoothPlastic
+	s.Color = G.carScratchColor
+	s.Size = Vector3.new(0.04, 0.1 + math.random() * 0.12, 1 + math.random() * 2.5)
+	s.CFrame = chassis.CFrame * CFrame.new(side * (half.X + 0.02), y, z) * CFrame.Angles(math.rad((math.random() - 0.5) * 20), 0, 0)
+	local w = Instance.new("WeldConstraint")
+	w.Part0 = chassis
+	w.Part1 = s
+	w.Parent = s
+	s.Parent = rig.model
+end
+
+local function updateGrind(rig: Rig, dt: number)
+	local G = FX.Grind
+	local chassis = rig.chassis
+	local v = chassis.AssemblyLinearVelocity
+	local flat = Vector3.new(v.X, 0, v.Z)
+	local hitPos, hitNormal, hitSide, hitZ = nil, nil, 0, 0
+	if flat.Magnitude > G.minSpeed then
+		local cf = chassis.CFrame
+		local half = chassis.Size / 2
+		for _, side in { -1, 1 } do
+			for _, z in { -half.Z * 0.6, half.Z * 0.6 } do
+				local origin = cf:PointToWorldSpace(Vector3.new(0, 0, z))
+				local hit = workspace:Raycast(origin, cf.RightVector * side * (half.X + G.reach), grindParams)
+				if hit and math.abs(hit.Normal.Y) < 0.5 then
+					hitPos, hitNormal, hitSide, hitZ = hit.Position, hit.Normal, side, z
+					break
+				end
+			end
+			if hitPos then
+				break
+			end
+		end
+	end
+
+	if hitPos and hitNormal then
+		local dir = flat.Unit
+		rig.grindAtt.WorldCFrame = CFrame.lookAt(hitPos + hitNormal * 0.2, hitPos + hitNormal * 0.2 + dir)
+		local speedK = math.clamp(flat.Magnitude / 100, 0.4, 1.5)
+		rig.grindSparks.Rate = G.sparkRate * speedK
+		-- 벽에 긁힌 자국 (끊김 없이 이어서)
+		if rig.lastMarkPos and (hitPos - rig.lastMarkPos).Magnitude < 12 then
+			if (hitPos - rig.lastMarkPos).Magnitude >= G.markSpacing then
+				addWallMark(rig.lastMarkPos, hitPos, hitNormal)
+				rig.lastMarkPos = hitPos
+			end
+		else
+			rig.lastMarkPos = hitPos
+		end
+		-- 차에도 긁힌 자국 (가끔)
+		if not rig.lastScratchPos or (hitPos - rig.lastScratchPos).Magnitude >= G.carScratchSpacing then
+			rig.lastScratchPos = hitPos
+			addCarScratch(rig, hitSide, hitZ)
+		end
+		if rig.grindSound then
+			if not rig.grindSound.IsPlaying then
+				rig.grindSound:Play()
+			end
+			rig.grindSound.Volume = G.soundVolume * speedK
+			rig.grindSound.PlaybackSpeed = 0.9 + speedK * 0.3
+		end
+	else
+		rig.grindSparks.Rate = 0
+		rig.lastMarkPos = nil
+		if rig.grindSound and rig.grindSound.IsPlaying then
+			rig.grindSound:Stop()
+		end
+	end
 end
 
 local function setOff(rig: Rig)
@@ -336,13 +524,33 @@ local function setOff(rig: Rig)
 	rig.flameCore.Rate = 0
 	rig.flameOuter.Rate = 0
 	rig.flameLight.Enabled = false
+	rig.grindSparks.Rate = 0
+	rig.lastMarkPos = nil
+	if rig.grindSound and rig.grindSound.IsPlaying then
+		rig.grindSound:Stop()
+	end
 	for _, t in rig.streaks do
 		t.Enabled = false
 	end
 end
 
-local function update()
+local function update(dt: number)
 	local camPos = workspace.CurrentCamera.CFrame.Position
+	grindParamsAge += dt
+	if grindParamsAge > 1 then
+		grindParamsAge = 0
+		local ignore: { Instance } = { getFxFolder() }
+		local vehicles = workspace:FindFirstChild("Vehicles")
+		if vehicles then
+			table.insert(ignore, vehicles)
+		end
+		for _, p in Players:GetPlayers() do
+			if p.Character then
+				table.insert(ignore, p.Character)
+			end
+		end
+		grindParams.FilterDescendantsInstances = ignore
+	end
 	for model, rig in rigs do
 		if not model.Parent or not rig.chassis.Parent then
 			rigs[model] = nil
@@ -383,6 +591,9 @@ local function update()
 		end
 		for _, t in rig.streaks do
 			t.Enabled = boost and FX.Streak.enabled
+		end
+		if not model:GetAttribute("Exploded") then
+			updateGrind(rig, dt)
 		end
 	end
 end
@@ -425,6 +636,110 @@ function VehicleEffects.PlayDriftBurst(model: Model)
 	end
 end
 
+-- 대폭발: 큰 불덩이 + 검은 연기 + 불똥 + 번쩍 (모두 화면)
+function VehicleEffects.PlayExplosion(pos: Vector3)
+	local cam = workspace.CurrentCamera
+	if (pos - cam.CFrame.Position).Magnitude > FX.maxDistance * 1.5 then
+		return
+	end
+	local T, E = FX.Textures, FX.Explosion
+	local p = Instance.new("Part")
+	p.Name = "ExplosionFX"
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.Transparency = 1
+	p.Size = Vector3.one
+	p.CFrame = CFrame.new(pos)
+	p.Parent = getFxFolder()
+	local fire = newEmitter(p, {
+		Texture = T.fire,
+		Lifetime = NumberRange.new(0.4, 0.9),
+		Speed = NumberRange.new(20, 55),
+		SpreadAngle = Vector2.new(180, 180),
+		Drag = 4,
+		Acceleration = Vector3.new(0, 25, 0),
+		Size = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 4),
+			NumberSequenceKeypoint.new(0.3, 9),
+			NumberSequenceKeypoint.new(1, 2),
+		}),
+		Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0),
+			NumberSequenceKeypoint.new(0.7, 0.3),
+			NumberSequenceKeypoint.new(1, 1),
+		}),
+		Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 200)),
+			ColorSequenceKeypoint.new(0.3, Color3.fromRGB(255, 170, 40)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(180, 40, 20)),
+		}),
+		Rotation = NumberRange.new(0, 360),
+		RotSpeed = NumberRange.new(-120, 120),
+		LightEmission = 1,
+		LightInfluence = 0,
+		Brightness = 3,
+	})
+	local smoke = newEmitter(p, {
+		Texture = T.smoke,
+		Lifetime = NumberRange.new(1.5, 2.8),
+		Speed = NumberRange.new(10, 30),
+		SpreadAngle = Vector2.new(180, 180),
+		Drag = 3,
+		Acceleration = Vector3.new(0, 12, 0),
+		Size = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 5),
+			NumberSequenceKeypoint.new(1, 16),
+		}),
+		Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.2),
+			NumberSequenceKeypoint.new(1, 1),
+		}),
+		Color = ColorSequence.new(Color3.fromRGB(60, 55, 55), Color3.fromRGB(120, 115, 110)),
+		Rotation = NumberRange.new(0, 360),
+		RotSpeed = NumberRange.new(-30, 30),
+		LightInfluence = 0.7,
+	})
+	local sparks = newEmitter(p, {
+		Texture = T.spark,
+		Lifetime = NumberRange.new(0.5, 1.2),
+		Speed = NumberRange.new(40, 90),
+		SpreadAngle = Vector2.new(180, 180),
+		Acceleration = Vector3.new(0, -120, 0),
+		Drag = 1,
+		Size = NumberSequence.new(0.6, 0),
+		LightEmission = 1,
+		LightInfluence = 0,
+		Brightness = 3,
+		Color = glowColor(Color3.fromRGB(255, 190, 70)),
+		Orientation = Enum.ParticleOrientation.VelocityParallel,
+	})
+	fire:Emit(E.fire)
+	smoke:Emit(E.smoke)
+	sparks:Emit(E.sparks)
+	local flash = Instance.new("PointLight")
+	flash.Color = Color3.fromRGB(255, 180, 90)
+	flash.Range = E.flashRange
+	flash.Brightness = E.flashBrightness
+	flash.Parent = p
+	TweenService:Create(flash, TweenInfo.new(0.7), { Brightness = 0 }):Play()
+	Debris:AddItem(p, 4)
+	-- 가까우면 화면 흔들림
+	local d = (pos - cam.CFrame.Position).Magnitude
+	if d < E.shakeDistance then
+		ChaseCamera.Punch(E.shake * (1 - d / E.shakeDistance))
+	end
+	if FX.Sounds.explosion ~= "" then
+		local s = Instance.new("Sound")
+		s.SoundId = FX.Sounds.explosion
+		s.Volume = 1
+		s.RollOffMaxDistance = 300
+		s.Parent = p
+		s:Play()
+	end
+end
+
 function VehicleEffects.Start()
 	if started then
 		return
@@ -443,6 +758,8 @@ function VehicleEffects.Start()
 	VehicleFX.OnClientEvent:Connect(function(kind, model, pos, strength)
 		if kind == "Impact" and typeof(model) == "Instance" and model:IsA("Model") and typeof(pos) == "Vector3" then
 			VehicleEffects.PlayImpact(model, pos, type(strength) == "number" and strength or 1)
+		elseif kind == "Explode" and typeof(pos) == "Vector3" then
+			VehicleEffects.PlayExplosion(pos)
 		end
 	end)
 	RunService.RenderStepped:Connect(update)

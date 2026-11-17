@@ -189,7 +189,7 @@ local drivePanel = Instance.new("Frame")
 drivePanel.Visible = false
 drivePanel.AnchorPoint = Vector2.new(0.5, 1)
 drivePanel.Position = UDim2.new(0.5, 0, 1, -16)
-drivePanel.Size = UDim2.fromOffset(320, 64)
+drivePanel.Size = UDim2.fromOffset(320, 82)
 drivePanel.BackgroundColor3 = DARK
 drivePanel.BackgroundTransparency = 0.3
 corner(drivePanel, 10)
@@ -214,6 +214,55 @@ boostFill.Size = UDim2.fromScale(1, 1)
 boostFill.BackgroundColor3 = Color3.fromRGB(60, 200, 255)
 corner(boostFill, 6)
 boostFill.Parent = boostBack
+
+-- HP 바 (부스터 게이지 아래)
+local hpBack = Instance.new("Frame")
+hpBack.Position = UDim2.new(0, 12, 0, 60)
+hpBack.Size = UDim2.new(1, -24, 0, 12)
+hpBack.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+corner(hpBack, 6)
+hpBack.Parent = drivePanel
+local hpFill = Instance.new("Frame")
+hpFill.Size = UDim2.fromScale(1, 1)
+hpFill.BackgroundColor3 = Color3.fromRGB(90, 230, 110)
+corner(hpFill, 6)
+hpFill.Parent = hpBack
+local lastHp = nil :: number?
+
+function HUD.SetHP(hp: any, maxHp: any)
+	if type(hp) ~= "number" or type(maxHp) ~= "number" or maxHp <= 0 then
+		return
+	end
+	local r = math.clamp(hp / maxHp, 0, 1)
+	hpFill.Size = UDim2.fromScale(r, 1)
+	-- 초록 → 노랑 → 빨강
+	hpFill.BackgroundColor3 = Color3.fromRGB(255, 70, 60):Lerp(Color3.fromRGB(90, 230, 110), r)
+	if lastHp and hp < lastHp - 1 then
+		-- 맞으면 바가 하얗게 번쩍
+		hpBack.BackgroundColor3 = Color3.new(1, 1, 1)
+		task.delay(0.08, function()
+			hpBack.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+		end)
+	end
+	lastHp = hp
+end
+
+-- 동승자 "내리기" 버튼 (모바일 포함 모두)
+local passengerBtn = button(gui, "내리기 (F)", UDim2.fromOffset(160, 44))
+passengerBtn.AnchorPoint = Vector2.new(0.5, 1)
+passengerBtn.Position = UDim2.new(0.5, 0, 1, -20)
+passengerBtn.Visible = false
+local passengerCallback: (() -> ())? = nil
+passengerBtn.MouseButton1Click:Connect(function()
+	if passengerCallback then
+		passengerCallback()
+	end
+end)
+
+function HUD.SetPassenger(on: boolean, callback: (() -> ())?)
+	passengerBtn.Visible = on
+	passengerCallback = callback
+end
 
 -- 드리프트 충전 단계 표시 (운전 패널 위)
 local driftLabel = Instance.new("TextLabel")
@@ -247,6 +296,7 @@ end
 
 function HUD.SetDriving(on: boolean)
 	drivePanel.Visible = on
+	lastHp = nil
 	if not on then
 		driftLabel.Text = ""
 	end

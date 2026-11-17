@@ -9,7 +9,42 @@ EffectsConfig.Textures = {
 	fire = "rbxasset://textures/particles/fire_main.dds",
 }
 
+-- 소리 (빈 칸 = 소리 없음). Creator Store 에서 고른 소리 번호를 "rbxassetid://번호" 형식으로 넣으면 바로 연결됨
+EffectsConfig.Sounds = {
+	scrape = "", -- 벽 긁는 소리 "끼리리릭" (반복 재생)
+	explosion = "", -- 폭발 "펑"
+}
+
 EffectsConfig.maxDistance = 400 -- 카메라에서 이보다 먼 차는 이펙트 끔 (성능)
+
+-- 벽 긁기 (벽에 붙어 달리면 계속 불똥 + 벽/차에 긁힌 자국)
+EffectsConfig.Grind = {
+	minSpeed = 20, -- 이 속도 이상일 때만
+	reach = 0.8, -- 차 옆면에서 벽까지 이 거리 안이면 "긁는 중"
+	sparkRate = 140, -- 초당 불똥 (속도에 비례해서 더 많아짐)
+	sparkColor = Color3.fromRGB(255, 200, 90),
+	markSpacing = 1.5, -- 벽 자국 조각 간격 (스터드)
+	wallMarkHeight = 0.5,
+	wallMarkColor = Color3.fromRGB(35, 35, 40),
+	wallMarkTransparency = 0.3,
+	wallMarkLifetime = 12, -- 벽 자국 사라지는 시간 (초)
+	maxWallMarks = 400, -- 화면 전체 최대 벽 자국 조각 (성능)
+	carScratchSpacing = 6, -- 이만큼 긁을 때마다 차에 자국 하나
+	carScratchColor = Color3.fromRGB(215, 215, 220), -- 페인트 벗겨진 색
+	maxCarScratches = 14, -- 차 한 대 최대 자국 (새 차 꺼내면 깨끗)
+	soundVolume = 0.6,
+}
+
+-- 대폭발 연출
+EffectsConfig.Explosion = {
+	fire = 45,
+	smoke = 30,
+	sparks = 70,
+	flashRange = 50,
+	flashBrightness = 12,
+	shake = 2,
+	shakeDistance = 90,
+}
 EffectsConfig.slideSkidAngle = 14 -- 드리프트 아니어도 이 각도 이상 미끄러지면 스키드 마크
 
 EffectsConfig.Skid = {

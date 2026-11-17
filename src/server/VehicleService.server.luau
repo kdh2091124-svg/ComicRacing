@@ -13,6 +13,9 @@ local VehicleConfig = require(Shared.Config.VehicleConfig)
 local GameplayConfig = require(Shared.Config.GameplayConfig)
 local VehicleFactory = require(script.Parent.VehicleFactory)
 local PermissionService = require(script.Parent.PermissionService)
+local HealthService = require(script.Parent.HealthService)
+
+local spawnAt -- 아래에서 정의 (HealthService 부활에서도 씀)
 
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local VehicleAction = Remotes:WaitForChild("VehicleAction") :: RemoteEvent
@@ -167,6 +170,22 @@ local function hookSeats(model: Model)
 	end
 end
 
+-- 정해진 위치에 차를 새로 만들어 놓음 (기존 차는 없앰). 폭발 후 부활에서도 씀
+function spawnAt(player: Player, vehicleId: string, cframe: CFrame): Model?
+	if not VehicleConfig.Get(vehicleId) then
+		return nil
+	end
+	destroyVehicle(player)
+	local model = VehicleFactory.Build(vehicleId, player.UserId, nil)
+	model:PivotTo(cframe)
+	model.Name = player.Name .. "_" .. vehicleId
+	model.Parent = vehiclesFolder
+	hookSeats(model)
+	HealthService.SetupVehicle(model)
+	spawned[player] = model
+	return model
+end
+
 local function spawnVehicle(player: Player, vehicleId: any)
 	if type(vehicleId) ~= "string" or not VehicleConfig.Get(vehicleId) then
 		return
@@ -194,21 +213,50 @@ local function spawnVehicle(player: Player, vehicleId: any)
 		hum.Sit = false
 		task.wait(0.1)
 	end
-	destroyVehicle(player)
-
-	local model = VehicleFactory.Build(vehicleId, player.UserId, nil)
 	local look = root.CFrame.LookVector * Vector3.new(1, 0, 1)
 	if look.Magnitude < 0.01 then
 		look = Vector3.new(0, 0, -1)
 	end
 	look = look.Unit
-	local size = model:GetExtentsSize()
-	local pos = root.Position + look * (size.Z / 2 + 6) + Vector3.new(0, size.Y / 2 + 2, 0)
-	model:PivotTo(CFrame.lookAt(pos, pos + look))
-	model.Name = player.Name .. "_" .. vehicleId
-	model.Parent = vehiclesFolder
-	hookSeats(model)
-	spawned[player] = model
+	local def = VehicleConfig.Get(vehicleId)
+	local len = def and def.placeholder.size.Z or 8
+	local pos = root.Position + look * (len / 2 + 6) + Vector3.new(0, 4, 0)
+	spawnAt(player, vehicleId, CFrame.lookAt(pos, pos + look))
+end
+
+-- 차 밖 빈 곳 찾기: 운전석 왼쪽 → 오른쪽 → 앞 → 뒤 순서로, 막혀 있지 않은 곳
+local function findExitSpot(model: Model, seat: BasePart, char: Model): CFrame?
+	local chassis = model.PrimaryPart
+	if not chassis then
+		return nil
+	end
+	local half = chassis.Size / 2
+	local seatLocal = chassis.CFrame:PointToObjectSpace(seat.Position)
+	local candidates = {
+		Vector3.new(-(half.X + 3), 0, seatLocal.Z), -- 왼쪽 (운전석 문)
+		Vector3.new(half.X + 3, 0, seatLocal.Z), -- 오른쪽
+		Vector3.new(0, 0, -(half.Z + 4)), -- 앞
+		Vector3.new(0, 0, half.Z + 4), -- 뒤
+	}
+	local overlap = OverlapParams.new()
+	overlap.FilterType = Enum.RaycastFilterType.Exclude
+	overlap.FilterDescendantsInstances = { model, char }
+	local ray = RaycastParams.new()
+	ray.FilterType = Enum.RaycastFilterType.Exclude
+	ray.FilterDescendantsInstances = { model, char }
+	local flatLook = chassis.CFrame.LookVector * Vector3.new(1, 0, 1)
+	flatLook = flatLook.Magnitude > 0.01 and flatLook.Unit or Vector3.new(0, 0, -1)
+	for _, offset in candidates do
+		local p = chassis.CFrame:PointToWorldSpace(offset) + Vector3.new(0, 2, 0)
+		local blocked = #workspace:GetPartBoundsInBox(CFrame.new(p + Vector3.new(0, 1.5, 0)), Vector3.new(2.5, 4.5, 2.5), overlap) > 0
+		if not blocked then
+			local hit = workspace:Raycast(p + Vector3.new(0, 3, 0), Vector3.new(0, -20, 0), ray)
+			local ground = hit and hit.Position or p
+			local standAt = ground + Vector3.new(0, 3, 0)
+			return CFrame.lookAt(standAt, standAt + flatLook)
+		end
+	end
+	return nil
 end
 
 local function exitVehicle(player: Player)
@@ -222,16 +270,31 @@ local function exitVehicle(player: Player)
 	end
 	local seat = hum.SeatPart
 	local model = vehicleOfSeat(seat)
-	hum.Sit = false
-	task.defer(function()
-		local char = player.Character
-		if char and model and model.PrimaryPart then
-			local chassis = model.PrimaryPart
-			local side = chassis.Size.X / 2 + 3
-			local sign = (chassis.CFrame:PointToObjectSpace(seat.Position).X >= 0) and 1 or -1
-			char:PivotTo(CFrame.new(chassis.CFrame:PointToWorldSpace(Vector3.new(side * sign, 1, 0))))
+	-- 달리는 중엔 못 내림 (속도를 줄이면 내릴 수 있음)
+	if model and model.PrimaryPart and not model:GetAttribute("Exploded") then
+		local speed = model.PrimaryPart.AssemblyLinearVelocity.Magnitude
+		if speed > GameplayConfig.Vehicle.exitMaxSpeed then
+			notify(player, "속도를 줄여야 내릴 수 있어요")
+			return
 		end
-	end)
+	end
+	local char = player.Character
+	local spot = model and char and findExitSpot(model, seat, char)
+	local w = seat:FindFirstChild("SeatWeld")
+	if w then
+		w:Destroy()
+	end
+	hum.Sit = false
+	if char then
+		task.defer(function()
+			if spot then
+				char:PivotTo(spot)
+			elseif model and model.PrimaryPart then
+				-- 빈 곳이 없으면 차 위로
+				char:PivotTo(CFrame.new(model.PrimaryPart.Position + Vector3.new(0, model.PrimaryPart.Size.Y + 4, 0)))
+			end
+		end)
+	end
 end
 
 local function toggleLights(player: Player)
@@ -260,6 +323,7 @@ end)
 
 -- 이펙트 중계: 운전자가 보낸 드리프트/부스터 상태를 모델 Attribute 로, 충돌 스파크는 다른 사람들에게
 local lastImpactRelay: { [Player]: number } = {}
+local lastHazard: { [Player]: number } = {}
 VehicleFX.OnServerEvent:Connect(function(player: Player, kind: any, a: any, b: any, c: any)
 	local hum = getHumanoid(player)
 	local seat = hum and hum.SeatPart
@@ -274,6 +338,21 @@ VehicleFX.OnServerEvent:Connect(function(player: Player, kind: any, a: any, b: a
 		model:SetAttribute("FX_Drift", a == true)
 		model:SetAttribute("FX_Tier", (type(b) == "number") and math.clamp(math.floor(b), 0, 3) or 0)
 		model:SetAttribute("FX_Boost", c == true)
+	elseif kind == "Damage" then
+		-- 충돌 데미지 (운전자 화면이 계산). 상한은 HealthService 가 검사
+		if type(a) == "number" and a == a then
+			HealthService.Damage(model, a)
+		end
+	elseif kind == "Lava" then
+		local now = os.clock()
+		if not lastHazard[player] or now - lastHazard[player] >= 0.2 then
+			lastHazard[player] = now
+			HealthService.Damage(model, GameplayConfig.Health.lavaDps * 0.25)
+		end
+	elseif kind == "Drown" then
+		if model.PrimaryPart.Position.Y < GameplayConfig.Health.drownY + 5 then
+			HealthService.Explode(model)
+		end
 	elseif kind == "Impact" then
 		if typeof(a) ~= "Vector3" or (a - model.PrimaryPart.Position).Magnitude > 40 then
 			return
@@ -292,6 +371,8 @@ VehicleFX.OnServerEvent:Connect(function(player: Player, kind: any, a: any, b: a
 	end
 end)
 
+HealthService.Start(vehiclesFolder, spawnAt)
+
 Players.PlayerAdded:Connect(PermissionService.Init)
 for _, p in Players:GetPlayers() do
 	PermissionService.Init(p)
@@ -302,4 +383,5 @@ Players.PlayerRemoving:Connect(function(player)
 	lastSpawn[player] = nil
 	lastImpactRelay[player] = nil
 	lastDenied[player] = nil
+	lastHazard[player] = nil
 end)

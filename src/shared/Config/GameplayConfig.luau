@@ -131,6 +131,7 @@ GameplayConfig.Camera = {
 
 GameplayConfig.Vehicle = {
 	spawnCooldown = 3,
+	exitMaxSpeed = 12, -- 이 속도보다 빠르면 못 내림 (운전자/동승자 모두)
 	-- 내 차 권한 (개발자 확정: 모두 / 친구만 / 나만). 기본값 TEMP.
 	permissionLevels = { "Everyone", "Friends", "OwnerOnly" },
 	permissionLabels = { Everyone = "모두", Friends = "친구만", OwnerOnly = "나만" },
@@ -138,9 +139,24 @@ GameplayConfig.Vehicle = {
 	devFreeVehicles = true, -- 개발용: 모든 차 무료로 꺼내기 (구매 시스템 생기면 false)
 }
 
-GameplayConfig.Health = { -- 2단계에서 사용. TEMP
-	regenDelay = 3, -- 데미지 후 회복 멈춤 (문서 확정)
-	regenPerSecond = 8,
+-- 차량 HP / 폭발 / 부활. 차마다 최대 HP 는 VehicleConfig stats.hp. 수치 TEMP
+GameplayConfig.Health = {
+	regenDelay = 3, -- 데미지 받으면 이 초 동안 회복 멈춤 (문서 확정)
+	regenPerSecond = 8, -- 그 후 초당 회복량
+	-- 충돌 데미지 = (속도 변화 - minImpactSpeed) × damagePerSpeed
+	-- 비스듬히 긁으면 속도가 거의 유지돼서 데미지 적고, 정면으로 꽈앙 박을수록 큼
+	minImpactSpeed = 35, -- 이보다 작은 충격은 데미지 없음
+	damagePerSpeed = 0.8, -- 예: 시속 110 정면 충돌 → (110-35)×0.8 = 60 데미지
+	maxPerHit = 90, -- 한 번에 최대 데미지 (서버 검사용)
+	lavaDps = 60, -- 용암 위에 있으면 초당 데미지
+	drownY = -8, -- 이 높이 아래로 빠지면 (바다 등) 바로 폭발
+	-- 폭발
+	respawnDelay = 3, -- 오픈월드: 폭발 후 이 초 뒤 그 근처에서 차와 함께 부활 (개발자 확정)
+	flingUp = 70, -- 탄 사람이 날아가는 위쪽 속도
+	flingSide = 45, -- 옆으로 날아가는 속도 (랜덤 방향)
+	debrisSpeed = 55, -- 차 조각 날아가는 속도
+	debrisTime = 4, -- 차 조각 남는 시간 (초)
+	safeSpotInterval = 0.5, -- 부활 위치 기록 간격 (땅에 똑바로 있을 때만)
 }
 
 -- 트라이얼 (혼자 기록 경쟁)

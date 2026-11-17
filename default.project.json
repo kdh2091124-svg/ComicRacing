@@ -20,6 +20,9 @@
         },
         "Trial": {
           "$className": "RemoteEvent"
+        },
+        "Ragdoll": {
+          "$className": "RemoteEvent"
         }
       }
     },
