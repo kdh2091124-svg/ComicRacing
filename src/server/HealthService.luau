@@ -77,6 +77,14 @@ local function explode(model: Model, frozen: { BasePart }?, savedVel: Vector3?)
 	local vehicleId = model:GetAttribute("VehicleId")
 	local safe = getInfo(model).safeCFrame
 
+	-- 0) 좌석 전부 비활성화: 동승석은 닿으면 앉는 방식이라, 날아가는 좌석 파편에 다시 앉아버리는 것 방지
+	for _, seat in model:GetDescendants() do
+		if seat:IsA("Seat") then
+			seat.Disabled = true
+			seat.CanTouch = false
+		end
+	end
+
 	-- 1) 탄 사람 전부 내리고 래그돌로 날리기
 	for _, hum in occupantsOf(model) do
 		-- 운전석/동승석 모두 "자동으로 내림" 판정: 좌석 연결 끊고, 차 몸통에 안 걸리게 살짝 위로 빼냄

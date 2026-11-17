@@ -45,6 +45,16 @@ function startFlail(char: Model)
 			conn:Disconnect()
 			return
 		end
+		-- 혹시 어디 좌석에 다시 앉아버렸으면 바로 빼냄
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if hum and hum.SeatPart then
+			local w = hum.SeatPart:FindFirstChild("SeatWeld")
+			if w then
+				w:Destroy()
+			end
+			hum.Sit = false
+			hum:ChangeState(Enum.HumanoidStateType.Physics)
+		end
 		-- 끝으로 갈수록 조금씩 지쳐서 느려짐
 		local power = Health.flailSpeed * (1 - 0.6 * (t / Health.flailTime))
 		for i, limb in limbs do
