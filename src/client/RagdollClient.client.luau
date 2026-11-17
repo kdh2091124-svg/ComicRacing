@@ -37,7 +37,14 @@ function startFlail(char: Model)
 			table.insert(limbs, p)
 		end
 	end
+	local body: { BasePart } = {}
+	for _, p in char:GetDescendants() do
+		if p:IsA("BasePart") and not isLimb(p.Name) then
+			table.insert(body, p)
+		end
+	end
 	local t0 = os.clock()
+	local nextWobble = Health.wobbleInterval
 	local conn
 	conn = RunService.Heartbeat:Connect(function()
 		local t = os.clock() - t0
@@ -56,7 +63,25 @@ function startFlail(char: Model)
 			hum:ChangeState(Enum.HumanoidStateType.Physics)
 		end
 		-- 끝으로 갈수록 조금씩 지쳐서 느려짐
-		local power = Health.flailSpeed * (1 - 0.6 * (t / Health.flailTime))
+		local fade = 1 - 0.6 * (t / Health.flailTime)
+		local power = Health.flailSpeed * fade
+
+		-- 플링 궤적: 일정 간격으로 날아가는 방향이 확 꺾임 (몸 전체에 같은 속도를 더해서 몸은 같이 감)
+		if t >= nextWobble then
+			nextWobble += Health.wobbleInterval * (0.6 + math.random() * 0.8)
+			local a = math.random() * math.pi * 2
+			local kick = Vector3.new(math.cos(a), (math.random() - 0.35), math.sin(a)) * Health.wobbleKick * fade
+			for _, p in char:GetDescendants() do
+				if p:IsA("BasePart") then
+					p.AssemblyLinearVelocity += kick
+				end
+			end
+		end
+		-- 몸통은 빙글빙글
+		local spin = Vector3.new(math.noise(t * 2, 7, 0), math.noise(0, t * 2, 7), math.noise(7, 0, t * 2)) * Health.bodySpin * 2 * fade
+		for _, p in body do
+			p.AssemblyAngularVelocity = spin
+		end
 		for i, limb in limbs do
 			local f = t * Health.flailRate
 			limb.AssemblyAngularVelocity = Vector3.new(

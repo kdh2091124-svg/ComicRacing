@@ -100,8 +100,9 @@ local function explode(model: Model, frozen: { BasePart }?, savedVel: Vector3?)
 		end
 		local player = Players:GetPlayerFromCharacter(hum.Parent)
 		if player then
+			-- 차 몸통과 같이 하늘로 (차 발사 방향 + 약간 옆으로 랜덤)
 			local a = math.random() * math.pi * 2
-			local fling = carVel * 0.5
+			local fling = carVel * 0.3
 				+ Vector3.new(math.cos(a) * Health.flingSide, Health.flingUp, math.sin(a) * Health.flingSide)
 			Ragdoll.Enable(player, fling)
 		end

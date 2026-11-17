@@ -153,8 +153,8 @@ GameplayConfig.Health = {
 	-- 폭발
 	tickDelay = 0.4, -- 박은 순간 차+사람 정지(히트스톱) 후 "콰앙" 까지 시간 (초). 이 동안 못 내림
 	respawnDelay = 3, -- 오픈월드: 폭발 후 이 초 뒤 그 근처에서 차와 함께 부활 (개발자 확정)
-	flingUp = 130, -- 탄 사람이 날아가는 위쪽 속도 (파앙!)
-	flingSide = 75, -- 옆으로 날아가는 속도 (랜덤 방향)
+	flingUp = 140, -- 탄 사람이 날아가는 위쪽 속도 (차 몸통 발사와 같게 → 같이 날아감)
+	flingSide = 30, -- 옆으로 날아가는 속도 (작게 → 차 근처에서 같이)
 	debrisSpeed = 90, -- 차 조각 옆으로 흩어지는 속도
 	debrisUp = 100, -- 차 조각 위로 튀는 속도
 	chassisLaunch = 140,
@@ -162,6 +162,10 @@ GameplayConfig.Health = {
 	flailTime = 1.8, -- 휘적거리는 시간 (초)
 	flailSpeed = 30, -- 팔다리 도는 세기
 	flailRate = 9, -- 방향 바뀌는 빠르기 (클수록 더 정신없음) -- 차 몸통이 하늘로 튀어오르는 속도
+	-- 플링 궤적: 날아가는 동안 방향이 이리저리 확확 꺾임
+	wobbleInterval = 0.2, -- 몇 초마다 꺾일지
+	wobbleKick = 55, -- 꺾일 때 더해지는 속도 (옆 + 위아래 랜덤)
+	bodySpin = 28, -- 몸 전체가 빙글빙글 도는 세기
 	debrisTime = 4, -- 차 조각 남는 시간 (초)
 	safeSpotInterval = 0.5, -- 부활 위치 기록 간격 (땅에 똑바로 있을 때만)
 }
