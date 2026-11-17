@@ -81,10 +81,16 @@ local function startMotion(char: Model, fling: Vector3)
 			-- 거의 옆으로만 꺾임 (위로 계속 더해지면 우주까지 날아감)
 			local a = math.random() * math.pi * 2
 			local kick = Vector3.new(math.cos(a), (math.random() - 0.5) * 0.3, math.sin(a)) * Health.wobbleKick * fade
+			-- 한 덩어리(Assembly)에 한 번만 더함 (안 그러면 붙어 있는 파트 수만큼 곱해져서 날아가버림)
+			local done: { [BasePart]: boolean } = {}
 			for _, p in all do
-				local v = p.AssemblyLinearVelocity + kick
-				-- 위로 올라가는 속도는 처음 날린 것보다 커지지 않게
-				p.AssemblyLinearVelocity = Vector3.new(v.X, math.min(v.Y, fling.Y), v.Z)
+				local root = p.AssemblyRootPart or p
+				if not done[root] then
+					done[root] = true
+					local v = root.AssemblyLinearVelocity + kick
+					-- 위로 올라가는 속도는 처음 날린 것보다 커지지 않게
+					root.AssemblyLinearVelocity = Vector3.new(v.X, math.min(v.Y, fling.Y), v.Z)
+				end
 			end
 		end
 		-- 몸통 빙글빙글
