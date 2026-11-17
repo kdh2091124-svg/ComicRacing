@@ -78,10 +78,13 @@ local function startMotion(char: Model, fling: Vector3)
 		-- 플링 궤적: 일정 간격으로 방향이 확 꺾임 (몸 전체에 같은 속도 → 통째로 꺾임)
 		if t >= nextWobble then
 			nextWobble += Health.wobbleInterval * (0.6 + math.random() * 0.8)
+			-- 거의 옆으로만 꺾임 (위로 계속 더해지면 우주까지 날아감)
 			local a = math.random() * math.pi * 2
-			local kick = Vector3.new(math.cos(a), math.random() - 0.35, math.sin(a)) * Health.wobbleKick * fade
+			local kick = Vector3.new(math.cos(a), (math.random() - 0.5) * 0.3, math.sin(a)) * Health.wobbleKick * fade
 			for _, p in all do
-				p.AssemblyLinearVelocity += kick
+				local v = p.AssemblyLinearVelocity + kick
+				-- 위로 올라가는 속도는 처음 날린 것보다 커지지 않게
+				p.AssemblyLinearVelocity = Vector3.new(v.X, math.min(v.Y, fling.Y), v.Z)
 			end
 		end
 		-- 몸통 빙글빙글
@@ -113,27 +116,37 @@ function Ragdoll.Enable(player: Player, fling: Vector3)
 	hum.BreakJointsOnDeath = false
 	hum.RequiresNeck = false
 	hum.Sit = false
-	for _, motor in char:GetDescendants() do
-		if motor:IsA("Motor6D") and motor.Part0 and motor.Part1 then
+	local function addSocket(a0: Attachment, a1: Attachment, parent: Instance)
+		local ball = Instance.new("BallSocketConstraint")
+		ball.Name = TAG
+		ball.Attachment0 = a0
+		ball.Attachment1 = a1
+		ball.LimitsEnabled = true
+		ball.TwistLimitsEnabled = true
+		ball.UpperAngle = 95 -- 크게 꺾여야 휘적거림이 잘 보임
+		ball.TwistLowerAngle = -75
+		ball.TwistUpperAngle = 75
+		ball.Parent = parent
+	end
+	for _, joint in char:GetDescendants() do
+		if joint:IsA("Motor6D") and joint.Part0 and joint.Part1 and joint.Enabled then
+			-- 예전 방식 관절
 			local a0 = Instance.new("Attachment")
 			a0.Name = TAG
-			a0.CFrame = motor.C0
-			a0.Parent = motor.Part0
+			a0.CFrame = joint.C0
+			a0.Parent = joint.Part0
 			local a1 = Instance.new("Attachment")
 			a1.Name = TAG
-			a1.CFrame = motor.C1
-			a1.Parent = motor.Part1
-			local ball = Instance.new("BallSocketConstraint")
-			ball.Name = TAG
-			ball.Attachment0 = a0
-			ball.Attachment1 = a1
-			ball.LimitsEnabled = true
-			ball.TwistLimitsEnabled = true
-			ball.UpperAngle = 95 -- 크게 꺾여야 휘적거림이 잘 보임
-			ball.TwistLowerAngle = -75
-			ball.TwistUpperAngle = 75
-			ball.Parent = motor.Part0
-			motor.Enabled = false
+			a1.CFrame = joint.C1
+			a1.Parent = joint.Part1
+			addSocket(a0, a1, joint.Part0)
+			joint.Enabled = false
+			joint:SetAttribute("RagdollDisabled", true)
+		elseif joint:IsA("AnimationConstraint") and joint.Enabled and joint.Attachment0 and joint.Attachment1 then
+			-- 새 방식 관절 (최신 아바타): 같은 위치에 공 관절을 만들고 원래 관절은 끔
+			addSocket(joint.Attachment0, joint.Attachment1, joint.Parent or char)
+			joint.Enabled = false
+			joint:SetAttribute("RagdollDisabled", true)
 		end
 	end
 	for _, p in parts(char) do
@@ -165,8 +178,9 @@ function Ragdoll.Disable(player: Player)
 	for _, d in char:GetDescendants() do
 		if d.Name == TAG then
 			d:Destroy()
-		elseif d:IsA("Motor6D") then
-			d.Enabled = true
+		elseif d:GetAttribute("RagdollDisabled") then
+			(d :: any).Enabled = true -- 예전/새 방식 관절 다시 켜기
+			d:SetAttribute("RagdollDisabled", nil)
 		elseif d:IsA("BasePart") and d:GetAttribute("RagdollOrigCollide") ~= nil then
 			d.CanCollide = d:GetAttribute("RagdollOrigCollide")
 			d:SetAttribute("RagdollOrigCollide", nil)
