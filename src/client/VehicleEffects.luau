@@ -682,6 +682,44 @@ local function screenHold(strength: number, maxTime: number)
 	end)
 end
 
+-- "세상 정지" (내 화면): 파티클(불똥, 연기, 불꽃)이 공중에 멈추고 카메라도 고정
+-- 실제 서버 물리는 그대로지만, 내 차와 탄 사람은 서버가 고정해 둬서 같이 멈춰 보임
+local function freezeWorld(seconds: number)
+	local emitters: { ParticleEmitter } = {}
+	local roots: { Instance } = { getFxFolder() }
+	local vehicles = workspace:FindFirstChild("Vehicles")
+	if vehicles then
+		table.insert(roots, vehicles)
+	end
+	for _, root in roots do
+		for _, d in root:GetDescendants() do
+			if d:IsA("ParticleEmitter") and d.TimeScale > 0 then
+				d.TimeScale = 0
+				table.insert(emitters, d)
+			end
+		end
+	end
+	-- 카메라 고정: 운전 중이면 운전 카메라를, 아니면 기본 카메라를 잠깐 멈춤
+	local cam = workspace.CurrentCamera
+	local restoreType: Enum.CameraType? = nil
+	if ChaseCamera.IsActive() then
+		ChaseCamera.Freeze(seconds)
+	else
+		restoreType = cam.CameraType
+		cam.CameraType = Enum.CameraType.Scriptable
+	end
+	task.delay(seconds, function()
+		for _, e in emitters do
+			if e.Parent then
+				e.TimeScale = 1
+			end
+		end
+		if restoreType and cam.CameraType == Enum.CameraType.Scriptable then
+			cam.CameraType = restoreType
+		end
+	end)
+end
+
 -- 내가 이 차에 타고 있거나 아주 가까운지
 local function isNearMe(model: Model?, pos: Vector3, radius: number): boolean
 	local char = Players.LocalPlayer.Character
@@ -710,6 +748,7 @@ function VehicleEffects.PlayPreExplosion(model: Model, pos: Vector3, freezeTime:
 	if isNearMe(model, pos, E.tickScreenRadius) then
 		-- 정지하는 동안 화면을 하얗게 "멈춘 것처럼" 유지 → 콰앙 순간 번쩍 후 사라짐
 		screenHold(E.tickScreenFlash, hold + 0.6)
+		freezeWorld(hold)
 	end
 	if FX.Sounds.tick ~= "" then
 		local s = Instance.new("Sound")

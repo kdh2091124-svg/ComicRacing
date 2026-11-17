@@ -49,6 +49,17 @@ function ChaseCamera.SetDrift(blend: number, dir: number)
 	driftBlend, driftDir = blend, dir
 end
 
+-- 화면 정지: 이 시간 동안 카메라가 그 자리에 딱 멈춤 + 둘러보기 막힘 (폭발 직전 히트스톱)
+local frozenUntil = 0
+
+function ChaseCamera.Freeze(seconds: number)
+	frozenUntil = os.clock() + seconds
+end
+
+function ChaseCamera.IsActive(): boolean
+	return active
+end
+
 -- 순간 흔들림 (드리프트 진입, 큰 충돌 등)
 function ChaseCamera.Punch(amount: number)
 	punch = math.max(punch, amount)
@@ -87,6 +98,9 @@ local function startOrbitInput()
 		end
 	end))
 	table.insert(inputConns, UserInputService.InputChanged:Connect(function(input)
+		if os.clock() < frozenUntil then
+			return -- 정지 중엔 화면 못 돌림
+		end
 		if input.UserInputType == Enum.UserInputType.MouseMovement and orbiting then
 			orbitYaw -= input.Delta.X * CamConfig.orbitSensitivity
 			orbitPitch = math.clamp(orbitPitch + input.Delta.Y * CamConfig.orbitSensitivity, CamConfig.orbitPitchMin, CamConfig.orbitPitchMax)
@@ -130,6 +144,11 @@ function ChaseCamera.Start(model: Model, seat: BasePart)
 
 	RunService:BindToRenderStep(BIND, Enum.RenderPriority.Camera.Value + 1, function(dt)
 		if not chassis.Parent then
+			return
+		end
+		if os.clock() < frozenUntil then
+			-- 정지: 카메라 그대로, 둘러보기 입력도 무시
+			orbiting = false
 			return
 		end
 		local cf = chassis.CFrame

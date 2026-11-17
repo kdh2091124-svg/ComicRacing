@@ -174,6 +174,12 @@ local function step(dt: number)
 	if not chassis.Parent then
 		return
 	end
+	-- 폭발 직전 정지(히트스톱) 중: 차가 고정돼서 무게가 무한대로 잡힘 → 주행 계산 쉬기
+	if chassis.Anchored or s.model:GetAttribute("Exploding") then
+		s.force.Force = Vector3.zero
+		s.torque.Torque = Vector3.zero
+		return
+	end
 	local stats = s.stats
 
 	s.paramsAge += dt
@@ -449,6 +455,9 @@ local function step(dt: number)
 			local staticLoad = massPer * workspace.Gravity
 			local gripLoad = springF + (staticLoad - springF) * Physics.gripLoadSmoothing
 			local maxGrip = mu * gripLoad
+			if maxGrip ~= maxGrip or maxGrip < 0 then
+				maxGrip = 0 -- 숫자가 깨지면(NaN/음수) 그립 0 으로 안전하게
+			end
 
 			-- 4) 구동/브레이크: 가속은 뒷바퀴 위주 → 코너에서 밟으면 꼬리가 나감
 			local driveF
