@@ -340,6 +340,7 @@ function ArenaBuilder.Build(options: { keepTerrain: boolean? }?)
 			arm.CustomPhysicalProperties = PhysicalProperties.new(100, 0, 0, 100, 1) -- 무겁고 미끄러움
 			arm:SetAttribute("ServerPhysics", true)
 			arm:SetAttribute("Hazard", "Plow")
+			arm:SetAttribute("Bumper", true) -- 닿으면 "통" 튕김 (GameplayConfig.Physics.Bumper)
 			-- 검정 줄무늬 (보기용, 날에 붙임)
 			for s = -2, 2 do
 				local stripe = newPart(arm, "Stripe", Vector3.new(len / 10, A.plowHeight + 0.1, A.plowThick + 0.1), cf * CFrame.new(s * len / 5, 0, 0), A.colors.plowB, Enum.Material.Metal)

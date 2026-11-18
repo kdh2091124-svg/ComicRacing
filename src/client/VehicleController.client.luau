@@ -201,6 +201,47 @@ local function step(dt: number)
 	-- 설정 > 주행 보조 (끄면 스핀 방지, 자동 카운터, 벽 방향 맞춤이 꺼짐)
 	local assist = ClientSettings.Get("DriveAssist") and 1 or 0
 
+	-- 범퍼에 닿음: "통" 하고 진행 방향 반대로 살짝 튕겨 나감 (데미지 없음)
+	-- 멈춰 있다가 맞으면 범퍼에서 멀어지는 쪽으로
+	if s.bumpPart then
+		local hit = s.bumpPart
+		s.bumpPart = nil
+		local B = Physics.Bumper
+		local t = os.clock()
+		if hit.Parent and t - s.lastBump >= B.cooldown then
+			s.lastBump = t
+			s.noDamageUntil = t + B.noDamageTime
+			local pv = s.prevVel
+			local planar = pv - up * pv:Dot(up)
+			local dir
+			if planar.Magnitude > B.minTravelSpeed then
+				dir = -planar.Unit
+			else
+				-- 범퍼 표면에서 가장 가까운 점 → 그 반대쪽
+				local lp = hit.CFrame:PointToObjectSpace(chassis.Position)
+				local half = hit.Size / 2
+				local closest = hit.CFrame:PointToWorldSpace(Vector3.new(
+					math.clamp(lp.X, -half.X, half.X), math.clamp(lp.Y, -half.Y, half.Y), math.clamp(lp.Z, -half.Z, half.Z)))
+				local away = chassis.Position - closest
+				away -= Vector3.yAxis * away.Y
+				dir = away.Magnitude > 0.1 and away.Unit or -fwd
+			end
+			local hitVel = hit.AssemblyLinearVelocity
+			hitVel -= Vector3.yAxis * hitVel.Y
+			local back = B.back + planar.Magnitude * B.backPerSpeed
+			chassis.AssemblyLinearVelocity = dir * back + hitVel * B.carryHit + Vector3.yAxis * B.up
+			chassis.AssemblyAngularVelocity = angVel * B.spinKeep
+			vel = chassis.AssemblyLinearVelocity
+			angVel = chassis.AssemblyAngularVelocity
+			fwdSpeed = vel:Dot(fwd)
+			s.prevVel = vel -- 이 튕김을 벽 긁기/충돌 데미지로 오해하지 않게
+			local fxPos = chassis.Position - dir * (chassis.Size.Z / 2)
+			VehicleEffects.PlayImpact(s.model, fxPos, B.fxStrength)
+			VehicleFX:FireServer("Impact", fxPos, B.fxStrength)
+			ChaseCamera.Punch(B.cameraPunch)
+		end
+	end
+
 	-- 벽 긁기: 비스듬히 박으면 속도를 거의 유지하고 벽을 따라 미끄러짐 (정면 충돌만 멈춤)
 	-- 직전 프레임보다 "노면 방향" 속도가 갑자기 줄었으면 "벽에 닿음" → 줄어든 방향이 벽 쪽
 	-- (예전엔 세상 기준 수평 속도로 봐서, 경사에서 꺾거나 경사에 들어설 때 속도가 위아래로 빠진 걸
@@ -728,7 +769,7 @@ local function step(dt: number)
 		end
 	end
 	local dv = dvVec.Magnitude
-	if not teleported and dv > HealthConfig.minImpactSpeed and now - s.lastDamage > 0.2 then
+	if not teleported and now >= s.noDamageUntil and dv > HealthConfig.minImpactSpeed and now - s.lastDamage > 0.2 then
 		s.lastDamage = now
 		local dmg = math.min((dv - HealthConfig.minImpactSpeed) * HealthConfig.damagePerSpeed, HealthConfig.maxPerHit)
 		local hp = s.model:GetAttribute("HP")
@@ -802,6 +843,9 @@ local function stopDriving()
 	end
 	session = nil
 	s.conn:Disconnect()
+	for _, c in s.bumpConns do
+		c:Disconnect()
+	end
 	TrialClient.OnStopDriving()
 	if s.model.Parent then
 		s.model:SetAttribute("FX_Drift", false)
@@ -906,6 +950,10 @@ local function startDriving(seat: Seat, hum: Humanoid)
 		flippedTime = 0,
 		chaos = 0,
 		chaosCalm = 0,
+		bumpPart = nil,
+		lastBump = 0,
+		noDamageUntil = 0,
+		bumpConns = {},
 		params = params,
 		paramsAge = 0,
 	}
@@ -931,6 +979,18 @@ local function startDriving(seat: Seat, hum: Humanoid)
 		s.rearCount = math.max(#s.wheels, 1) * Physics.rearDriveBias
 	end
 	refreshRayFilter(s)
+	-- 범퍼(Attribute "Bumper" 붙은 파트, 예: 회전 쟁기)에 닿으면 기록 → 다음 물리 단계에서 "통" 튕김
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") and d.CanCollide then
+			table.insert(s.bumpConns, d.Touched:Connect(function(hit: BasePart)
+				local b = hit:GetAttribute("Bumper") and hit
+					or (hit.Parent and hit.Parent:IsA("BasePart") and hit.Parent:GetAttribute("Bumper") and hit.Parent)
+				if b then
+					s.bumpPart = b :: BasePart
+				end
+			end))
+		end
+	end
 	session = s
 
 	InputState.Enable(onPress)
