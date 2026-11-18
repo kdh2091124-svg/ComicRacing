@@ -11,7 +11,17 @@
    그러면 `Workspace.Map` 이 생긴다. 이제 직접 고쳐도 되고, Rojo는 맵을 건드리지 않는다.
 5. 꼭 **저장하거나 게시**한다. 맵은 Git이 아니라 플레이스 파일에 저장되기 때문이다.
 
-## 오픈월드 도로 (새 맵)
+## 섬 월드 (최신 맵)
+Studio 명령줄 (기존 Workspace.Map 은 ServerStorage 로 백업, 지형은 새로 만듦):
+```lua
+require(game.ServerStorage.Tools.IslandBuilder:Clone()).Build()
+```
+- 남쪽 해안 바둑판 도심(대로, 해변 도로, 부두, 딜러샵 옆 스폰) / 강 + 다리 / 북동 설산 고갯길 / 북서 서킷 / 서쪽 긴 다리 + 해안도로 + 공항 + 숲 / 동쪽 사막 협곡
+- 길 모양: `src/tools/IslandBuilder.luau` 의 `buildRoutes()`, 땅 모양: `LAND`, 도심 특별 블록: `SPECIAL`
+- 길 까는 공통 기술은 `src/tools/RoadEngine.luau` (RoadBuilder 와 같은 방식: 자동 다리/입구, 경사 상한, 지형 채우기/깎기)
+- 끝나면 출력창에 길별 경사/다리 리포트가 나옴 (경고 뜨면 알려주세요)
+
+## 오픈월드 도로 (이전 맵)
 Studio 명령줄 (기존 Workspace.Map 은 ServerStorage 로 백업됨):
 ```lua
 require(game.ServerStorage.Tools.RoadBuilder:Clone()).Build()
