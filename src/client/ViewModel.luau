@@ -125,7 +125,7 @@ local chamberRound: BasePart? = nil -- 스나 약실 탄환 (볼트 젖혔을 �
 local chamberLocal = CFrame.identity
 local boltHandleLocal: Vector3? = nil -- 볼트 손잡이 끝 (오른손이 잡으러 가는 곳)
 local hasGrip = false
-type ArmSet = { hand: BasePart?, fore: BasePart?, single: BasePart? }
+type ArmSet = { hand: BasePart?, fore: BasePart?, single: BasePart?, singleLen: number?, foreLen: number? }
 local rightArm: ArmSet = {}
 local leftArm: ArmSet = {}
 local raiseStart = 0
@@ -297,10 +297,14 @@ local function cloneArms(m: Model)
 	end
 	if char:FindFirstChild("Right Arm") then -- R6
 		rightArm.single = grab("Right Arm")
+		rightArm.singleLen = rightArm.single and rightArm.single.Size.Y or nil
 		leftArm.single = grab("Left Arm")
+		leftArm.singleLen = leftArm.single and leftArm.single.Size.Y or nil
 	else -- R15
 		rightArm.fore, rightArm.hand = grab("RightLowerArm"), grab("RightHand")
+		rightArm.foreLen = rightArm.fore and rightArm.fore.Size.Y or nil
 		leftArm.fore, leftArm.hand = grab("LeftLowerArm"), grab("LeftHand")
+		leftArm.foreLen = leftArm.fore and leftArm.fore.Size.Y or nil
 	end
 	-- 옷: Humanoid + Shirt/BodyColors 가 같이 있어야 팔에 옷 무늬가 입혀짐
 	local hum = Instance.new("Humanoid")
@@ -649,26 +653,39 @@ function ViewModel.Axes(): (Vector3?, Vector3?)
 end
 
 -- 팔 배치: 손 끝이 handPos, 팔은 어깨(화면 밖) 쪽으로 뻗음
-local function placeArm(set: ArmSet, handPos: Vector3, shoulder: Vector3, camCF: CFrame)
-	local upDir = shoulder - handPos
-	if upDir.Magnitude < 0.01 then
+--   twistRef = 총의 오른쪽 방향 → 팔(손목)이 총과 같이 비틀림 (총만 꺾이고 팔은 그대로인 문제 해결)
+--   손이 팔 길이보다 멀면 팔이 어깨까지 늘어남 (팔 쭉 뻗은 자세에서 팔이 허공에서 끊기지 않게)
+local function placeArm(set: ArmSet, handPos: Vector3, shoulder: Vector3, camCF: CFrame, twistRef: Vector3?)
+	local toShoulder = shoulder - handPos
+	local dist = toShoulder.Magnitude
+	if dist < 0.01 then
 		return
 	end
-	upDir = upDir.Unit
-	local right = upDir:Cross(camCF.LookVector)
+	local upDir = toShoulder / dist
+	local right
+	if twistRef then
+		right = twistRef - upDir * twistRef:Dot(upDir) -- 팔 축에 수직인 총 오른쪽
+	end
+	if not right or right.Magnitude < 0.05 then
+		right = upDir:Cross(camCF.LookVector)
+	end
 	right = right.Magnitude > 0.01 and right.Unit or camCF.RightVector
 	local function orient(center: Vector3): CFrame
 		return CFrame.fromMatrix(center, right, upDir)
 	end
 	if set.single then -- R6: 아래쪽 끝 = 손
-		set.single.CFrame = orient(handPos + upDir * set.single.Size.Y / 2)
+		local len = math.max(set.singleLen or set.single.Size.Y, dist)
+		set.single.Size = Vector3.new(set.single.Size.X, len, set.single.Size.Z)
+		set.single.CFrame = orient(handPos + upDir * len / 2)
 	else
 		local handLen = set.hand and set.hand.Size.Y or 0.3
 		if set.hand then
 			set.hand.CFrame = orient(handPos + upDir * handLen / 2)
 		end
 		if set.fore then
-			set.fore.CFrame = orient(handPos + upDir * (handLen + set.fore.Size.Y / 2))
+			local len = math.max(set.foreLen or set.fore.Size.Y, dist - handLen)
+			set.fore.Size = Vector3.new(set.fore.Size.X, len, set.fore.Size.Z)
+			set.fore.CFrame = orient(handPos + upDir * (handLen + len / 2))
 		end
 	end
 end
@@ -774,8 +791,10 @@ function ViewModel.Update(cam: Camera, state)
 		-- 2) 부드럽게 쏘는 자세(I)로 복귀(0.1~0.26)
 		local wind = smooth(0, 0.06, r) * (1 - smooth(0.06, 0.085, r))
 		local snap = smooth(0.06, 0.095, r) * (1 - smooth(0.11, 0.26, r))
-		cf *= CFrame.Angles(0, 0, math.rad(10) * wind)
-		cf *= CFrame.new(0.1 * snap, 0.04 * snap, 0) * CFrame.Angles(math.rad(-4) * snap, math.rad(-6) * snap, math.rad(-55) * snap)
+		-- 손목이 아니라 팔꿈치(손 아래 뒤쪽)를 축으로 → 총과 손이 같이 휙 쓸려 감 (한손으로 탁 꺾기)
+		local elbow = Vector3.new(0, -0.9 * S0, 1.0 * S0)
+		cf *= aboutPoint(elbow, CFrame.Angles(0, 0, math.rad(10) * wind))
+		cf *= aboutPoint(elbow, CFrame.Angles(math.rad(-4) * snap, math.rad(-6) * snap, math.rad(-55) * snap))
 		if crossed(0.09) and magSet then
 			-- 총이 오른쪽으로 꺾이면서 아래쪽 탄창은 왼쪽 아래로 빙글빙글 날아감
 			throwSet(magSet, cf, -cam.CFrame.RightVector * 22 - cam.CFrame.UpVector * 3 + cam.CFrame.LookVector * 3, cam.CFrame.LookVector * 22)
@@ -852,7 +871,9 @@ function ViewModel.Update(cam: Camera, state)
 	elseif state.reload and style == "revolver" then
 		-- 1) "/" 반대 방향(총 위쪽이 왼쪽)으로 탁 쳐서 실린더 열고 휙 돌림 (0~0.08)
 		local snapOpen = smooth(0, 0.05, r) * (1 - smooth(0.08, 0.16, r))
-		cf *= CFrame.new(-0.08 * snapOpen, 0, 0) * CFrame.Angles(math.rad(-6) * snapOpen, 0, math.rad(42) * snapOpen)
+		-- 팔꿈치 축으로 팔째 탁 (총만 꺾이지 않게)
+		local elbow = Vector3.new(0, -0.9 * S0, 1.0 * S0)
+		cf *= aboutPoint(elbow, CFrame.Angles(math.rad(-6) * snapOpen, 0, math.rad(42) * snapOpen))
 		cylOpen = backOut(math.clamp((r - 0.03) / 0.05, 0, 1)) * (1 - smooth(0.67, 0.7, r))
 		if crossed(0.04) then
 			jolt(0.02, -0.06, 0.18)
@@ -860,7 +881,7 @@ function ViewModel.Update(cam: Camera, state)
 		end
 		-- 2) 천천히 들어 올림 (0.14~0.34) → 탄피가 촤르르 하나씩 빠짐 (WeaponClient), 올린 채 유지
 		local up = smooth(0.14, 0.34, r) * (1 - smooth(0.6, 0.68, r))
-		cf *= CFrame.new(-0.15 * up, 0.3 * up, 0.25 * up) * CFrame.Angles(math.rad(75) * up, math.rad(-12) * up, math.rad(-10) * up)
+		cf *= aboutPoint(elbow, CFrame.Angles(math.rad(70) * up, math.rad(-12) * up, math.rad(-10) * up)) -- 팔꿈치 굽혀서 들기
 		-- 3) 올린 채로 실린더 크기에 맞는 스피드로더를 콕 (0.38~0.53) → 왼쪽으로 빼서 버리기 (0.56~0.62)
 		if r >= 0.38 and r < 0.62 and cylSet then
 			local come = smooth(0.38, 0.5, r)
@@ -882,7 +903,7 @@ function ViewModel.Update(cam: Camera, state)
 		end
 		-- 4) 내리면서 "/" 방향(총 위쪽이 오른쪽)으로 탁 쳐서 실린더 닫기 (0.68) → 살짝 돎 → 제자리
 		local snapClose = smooth(0.64, 0.69, r) * (1 - smooth(0.72, 0.85, r))
-		cf *= CFrame.Angles(0, math.rad(-6) * snapClose, math.rad(-48) * snapClose)
+		cf *= aboutPoint(elbow, CFrame.Angles(0, math.rad(-6) * snapClose, math.rad(-48) * snapClose))
 		if crossed(0.68) then
 			jolt(0.1, 0.05, -0.24)
 			cylSpinV = 9
@@ -1098,9 +1119,9 @@ function ViewModel.Update(cam: Camera, state)
 	local camCF = cam.CFrame
 	-- 한손 파지(리볼버): 오른팔은 더 쭉 뻗음
 	local rShoulder = oneHanded and Vector3.new(0.6, -1.9, 0.5) or Vector3.new(1.2, -2.2, 0.6)
-	placeArm(rightArm, rHand, camCF:PointToWorldSpace(rShoulder:Lerp(Vector3.new(0.5, -1.8, 0.6), adsBlend)), camCF)
+	placeArm(rightArm, rHand, camCF:PointToWorldSpace(rShoulder:Lerp(Vector3.new(0.5, -1.8, 0.6), adsBlend)), camCF, cf.RightVector) -- 팔이 총과 같이 비틀림
 	if showLeft then
-		placeArm(leftArm, lHand, camCF:PointToWorldSpace(Vector3.new(-1.1, -2.2, -0.2):Lerp(Vector3.new(-0.8, -2, -0.3), adsBlend)), camCF)
+		placeArm(leftArm, lHand, camCF:PointToWorldSpace(Vector3.new(-1.1, -2.2, -0.2):Lerp(Vector3.new(-0.8, -2, -0.3), adsBlend)), camCF, cf.RightVector)
 	else
 		for _, p in { leftArm.single, leftArm.fore, leftArm.hand } do
 			if p then
