@@ -46,6 +46,7 @@ WeaponConfig.Weapons = {
 		scopeTime = 0.25, -- 우클릭 후 이 시간 동안은 아직 튐 (점점 모임) → 퀵스코프 방지
 		boltTime = 1.0, -- 한 발 쏘면 조준 풀리고 볼트 당김. 이 시간 동안 다시 조준 못 함 (탄피는 이때 튐)
 		scopeGlint = true, -- 조준하는 동안 상대 화면에 조준경 반짝임
+		scopeOverlay = true, -- 조준하면 조준경 화면 (O 안에 +, 바깥은 어둡게). 흐릿한 동안은 탄이 튐
 		magazine = 5,
 		reloadTime = 2.6,
 		zoomFov = 20,
@@ -107,8 +108,14 @@ WeaponConfig.General = {
 	originTolerance = 25, -- (서버 검사) 쏜 위치가 보조수 머리에서 이보다 멀면 무효
 	tracerTime = 0.06,
 	friendlyFire = false, -- 같은 차에 탄 사람끼리는 안 맞음 (팀은 게임 모드 만들 때)
-	-- 보조수 카메라 (어깨 너머)
-	cameraOffset = Vector3.new(2.2, 2.4, 9), -- 머리 기준 오른쪽, 위, 뒤
+	-- 보조수 카메라
+	firstPerson = true, -- true = 1인칭 (눈 위치, 내 몸 안 보임) / false = 어깨 너머 3인칭
+	eyeOffset = Vector3.new(0, 0.35, 0), -- 1인칭 눈 위치 (머리 중심 기준)
+	cameraOffset = Vector3.new(2.2, 2.4, 9), -- 3인칭일 때 머리 기준 오른쪽, 위, 뒤
+	-- 조준경 흐림 (scopeOverlay 무기): 흐린 만큼 탄이 튐, 선명하면 똑바로
+	scopeTurnBlur = 0.015, -- 화면을 돌린 만큼 흐려짐 (마우스 1픽셀당)
+	scopeSettle = 3.5, -- 돌리기 멈추면 선명해지는 빠르기 (초당)
+	scopeBlurSize = 22, -- 가장 흐릴 때 흐림 세기
 	mouseSensitivity = 0.0035,
 	zoomSensitivityScale = 0.4, -- 조준 중엔 마우스가 이만큼 느리게
 	recoilRecover = 6, -- 반동이 원래 조준으로 돌아오는 빠르기 (클수록 빨리)

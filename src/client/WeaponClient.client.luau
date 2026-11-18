@@ -76,6 +76,72 @@ for _, o in CROSS_DIRS do
 	table.insert(crossArms, arm)
 end
 
+-- 조준경 화면: 가운데 동그란 렌즈 + 십자선, 렌즈 바깥은 반투명 어두운 검정
+--   (이미지 없이: 아주 두꺼운 테두리(UIStroke)를 단 원 = 바깥을 덮는 어두운 판)
+local scope = Instance.new("Frame")
+scope.Name = "Scope"
+scope.AnchorPoint = Vector2.new(0.5, 0.5)
+scope.Position = UDim2.fromScale(0.5, 0.5)
+scope.Size = UDim2.fromScale(0.82, 0.82)
+scope.BackgroundTransparency = 1
+scope.Visible = false
+scope.ZIndex = 5
+scope.Parent = gui
+do
+	local ratio = Instance.new("UIAspectRatioConstraint")
+	ratio.AspectRatio = 1
+	ratio.DominantAxis = Enum.DominantAxis.Height
+	ratio.Parent = scope
+	local round = Instance.new("UICorner")
+	round.CornerRadius = UDim.new(1, 0)
+	round.Parent = scope
+	local dark = Instance.new("UIStroke") -- 렌즈 바깥 전체를 덮는 어두운 판
+	dark.Thickness = 2500
+	dark.Color = Color3.new(0, 0, 0)
+	dark.Transparency = 0.22
+	dark.Parent = scope
+	local rim = Instance.new("Frame") -- 렌즈 테두리 (진한 검정 고리)
+	rim.AnchorPoint = Vector2.new(0.5, 0.5)
+	rim.Position = UDim2.fromScale(0.5, 0.5)
+	rim.Size = UDim2.fromScale(1, 1)
+	rim.BackgroundTransparency = 1
+	rim.Parent = scope
+	local rimRound = Instance.new("UICorner")
+	rimRound.CornerRadius = UDim.new(1, 0)
+	rimRound.Parent = rim
+	local rimStroke = Instance.new("UIStroke")
+	rimStroke.Thickness = 6
+	rimStroke.Color = Color3.new(0, 0, 0)
+	rimStroke.Parent = rim
+	-- 십자선 (+): 가운데는 비워서 정확히 보이게
+	for _, spec in {
+		{ UDim2.new(0, 2, 0.46, 0), UDim2.fromScale(0.5, 0.25) },
+		{ UDim2.new(0, 2, 0.46, 0), UDim2.fromScale(0.5, 0.75) },
+		{ UDim2.new(0.46, 0, 0, 2), UDim2.fromScale(0.25, 0.5) },
+		{ UDim2.new(0.46, 0, 0, 2), UDim2.fromScale(0.75, 0.5) },
+	} do
+		local line = Instance.new("Frame")
+		line.AnchorPoint = Vector2.new(0.5, 0.5)
+		line.Size = spec[1]
+		line.Position = spec[2]
+		line.BackgroundColor3 = Color3.new(0, 0, 0)
+		line.BorderSizePixel = 0
+		line.Parent = scope
+	end
+	local dot = Instance.new("Frame")
+	dot.AnchorPoint = Vector2.new(0.5, 0.5)
+	dot.Position = UDim2.fromScale(0.5, 0.5)
+	dot.Size = UDim2.fromOffset(4, 4)
+	dot.BackgroundColor3 = Color3.fromRGB(255, 40, 40)
+	dot.BorderSizePixel = 0
+	dot.Parent = scope
+end
+
+-- 화면 흐림 (조준경이 덜 맞춰졌을 때). 내 화면 전용 (카메라 안에 넣음)
+local blur = Instance.new("BlurEffect")
+blur.Size = 0
+blur.Enabled = false
+
 local hitMark = Instance.new("Frame")
 hitMark.AnchorPoint = Vector2.new(0.5, 0.5)
 hitMark.Position = center
@@ -171,18 +237,31 @@ local rmbDown = false
 local zoomStart = 0
 local boltUntil = 0
 local scopedSent = false
+local turnBlur = 0 -- 화면 돌려서 생긴 흐림 (0~1)
+local scopeBlur = 0 -- 지금 조준경 흐림 (0 = 선명 = 탄 안 튐, 1 = 완전 흐림 = hipSpread 만큼 튐)
+
+-- 지금 조준경 흐림: 줌 켠 직후(scopeTime 동안 서서히 선명) 또는 화면 돌릴 때
+local function updateScopeBlur(def, dt: number, mouseMove: number)
+	if not (zooming and def and def.hipSpread) then
+		turnBlur = 0
+		scopeBlur = 0
+		return
+	end
+	local scopeIn = 0
+	if def.scopeTime and def.scopeTime > 0 then
+		scopeIn = 1 - math.clamp((os.clock() - zoomStart) / def.scopeTime, 0, 1)
+	end
+	turnBlur = math.clamp(turnBlur + mouseMove * G.scopeTurnBlur - dt * G.scopeSettle, 0, 1)
+	scopeBlur = math.max(scopeIn, turnBlur)
+end
 
 local function currentSpread(def): number
 	if def.hipSpread then
 		if not zooming then
 			return def.hipSpread
 		end
-		-- 조준 완료 시간: 우클릭 직후엔 아직 튀다가 scopeTime 동안 모임
-		local t = def.scopeTime and def.scopeTime > 0 and (os.clock() - zoomStart) / def.scopeTime or 1
-		if t < 1 then
-			return def.hipSpread + (def.spread - def.hipSpread) * t
-		end
-		return def.spread
+		-- 흐린 만큼 튐, 완전히 선명하면 spread(=0) → 똑바로
+		return def.spread + (def.hipSpread - def.spread) * scopeBlur
 	end
 	return def.spread * (zooming and 0.4 or 1)
 end
@@ -408,12 +487,32 @@ local function enter(char: Model, vehicle: Model?)
 		bloom -= bloom * math.min(dt * 8, 1)
 		local rot = CFrame.fromEulerAnglesYXZ(pitch + recoilP, yaw + recoilY, 0)
 		local def = currentDef()
-		local offset = zooming and G.cameraOffset * Vector3.new(0.6, 0.5, 0.3) or G.cameraOffset
-		local jitter = Vector3.new(math.random() - 0.5, math.random() - 0.5, 0) * shake
-		local pos = head.Position + rot:VectorToWorldSpace(offset + jitter)
+		local pos
+		if G.firstPerson then
+			-- 1인칭: 눈 위치. 내 몸/총은 내 화면에서만 안 보이게
+			local jitter = Vector3.new(math.random() - 0.5, math.random() - 0.5, 0) * shake * 0.4
+			pos = head.Position + G.eyeOffset + rot:VectorToWorldSpace(jitter)
+			for _, d in c:GetDescendants() do
+				if d:IsA("BasePart") or d:IsA("Decal") then
+					(d :: any).LocalTransparencyModifier = 1
+				end
+			end
+		else
+			local offset = zooming and G.cameraOffset * Vector3.new(0.6, 0.5, 0.3) or G.cameraOffset
+			local jitter = Vector3.new(math.random() - 0.5, math.random() - 0.5, 0) * shake
+			pos = head.Position + rot:VectorToWorldSpace(offset + jitter)
+		end
 		cam.CFrame = CFrame.lookAt(pos, pos + rot.LookVector) * CFrame.Angles(0, 0, (math.random() - 0.5) * shake * 0.08)
 		local fov = (zooming and def and def.zoomFov or DEFAULT_FOV) + fovKick
 		cam.FieldOfView += (fov - cam.FieldOfView) * math.min(dt * 14, 1)
+		-- 조준경 화면 + 흐림 (흐린 만큼 탄이 튐)
+		updateScopeBlur(def, dt, md.Magnitude)
+		local scopeOn = zooming and def ~= nil and def.scopeOverlay == true
+		scope.Visible = scopeOn
+		cross.Visible = not scopeOn
+		blur.Parent = cam
+		blur.Enabled = scopeOn and scopeBlur > 0.01
+		blur.Size = scopeBlur * G.scopeBlurSize
 		-- 조준점 벌어짐 (쏠수록 벌어졌다 모임)
 		local gap = 10 + bloom * 26 + (def and math.min(currentSpread(def), 8) * 5 or 0)
 		for i, arm in crossArms do
@@ -442,6 +541,18 @@ local function exit()
 	if scopedSent then
 		scopedSent = false
 		Remote:FireServer("Scope", false)
+	end
+	scope.Visible = false
+	cross.Visible = true
+	blur.Enabled = false
+	turnBlur, scopeBlur = 0, 0
+	-- 1인칭에서 숨겼던 내 몸 다시 보이게
+	if player.Character then
+		for _, d in player.Character:GetDescendants() do
+			if d:IsA("BasePart") or d:IsA("Decal") then
+				(d :: any).LocalTransparencyModifier = 0
+			end
+		end
 	end
 	for _, c in conns do
 		c:Disconnect()
