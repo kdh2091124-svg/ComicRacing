@@ -1,68 +1,156 @@
--- 1인칭 내 무기 (내 화면 전용): 총 + 팔이 화면 오른쪽 아래에 보이고 움직임
---   들어 올리기, 마우스 따라 흔들림(스웨이), 숨쉬기, 쏠 때 반동, 볼트 당기기, 장전, 우클릭 조준(가운데로)
+-- 1인칭 내 무기 (내 화면 전용): 총 + "내 캐릭터의 진짜 팔"(옷/피부색 그대로)이 화면 오른쪽 아래에 보이고 움직임
+-- 모션은 스프링(튕기며 제자리) + 짧은 동작 단계로 빠르고 간결하게
+--   쏠 때: 뒤로 탁 밀리고 총구가 들렸다가 살짝 튕기며 복귀 (쫄깃)
+--   볼트: 굴리기 → 당기기 → 밀기 → 복귀
+--   장전: 기울이기 → 탄창 빼기(왼손 아래로) → 꽂기 → 탁 치기 → 복귀
+--   스웨이(마우스 따라 늦게), 숨쉬기, 꺼내기(아래에서 올라옴), 우클릭 조준(가운데로)
 -- 총 모델: ReplicatedStorage.WeaponModels.<id> (Tool/Model). 가장 긴 쪽 = 총열, "Muzzle" 쪽이 앞. 없으면 상자 총
--- 크기/위치는 VM 표에서 조절
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
 
 local ViewModel = {}
 
 local VM = {
-	hip = CFrame.new(0.95, -0.85, -1.9), -- 평소 위치 (카메라 기준 오른쪽, 아래, 앞)
-	ads = CFrame.new(0, -0.42, -1.45), -- 우클릭 조준 위치 (가운데)
-	maxLength = 3.6, -- 총이 이보다 길면 이 길이로 줄임 (화면을 너무 가리지 않게)
-	grip = 0.35, -- 총 길이 중 오른손이 쥐는 곳 (0 = 개머리판 끝)
-	swayAmount = 0.0018, -- 마우스 움직임에 따라 총이 늦게 따라오는 정도
-	swayReturn = 9,
-	kickBack = 0.28, -- 쏠 때 뒤로 밀리는 거리
-	kickUp = 7, -- 쏠 때 총구가 들리는 각도 (도)
-	kickReturn = 14,
-	adsSpeed = 12,
-	raiseTime = 0.35, -- 무기 꺼낼 때 아래에서 올라오는 시간
-	armColor = Color3.fromRGB(240, 200, 160),
-	sleeveColor = Color3.fromRGB(60, 70, 90),
+	hip = CFrame.new(0.95, -1.05, -2.2), -- 평소 위치 (카메라 기준 오른쪽, 아래, 앞)
+	ads = CFrame.new(0, -0.55, -1.7), -- 우클릭 조준 위치 (가운데)
+	maxLength = 3.6, -- 총이 이보다 길면 이 길이로 줄임
+	grip = 0.32, -- 총 길이 중 오른손이 쥐는 곳 (0 = 개머리판 끝)
+	foregrip = 0.68, -- 왼손이 받치는 곳
+	-- 쏠 때 반동 스프링 (클수록 빨리, damping 낮을수록 더 튕김)
+	kickBack = 0.35, -- 한 발당 뒤로 밀리는 속도
+	kickUp = 0.22, -- 한 발당 총구 들림 (라디안 속도)
+	kickRoll = 0.08,
+	kickStiffness = 260,
+	kickDamping = 0.42, -- 0.4~0.6 = 살짝 튕기며 복귀 (쫄깃)
+	-- 스웨이 스프링
+	swayAmount = 0.0016,
+	swayStiffness = 120,
+	swayDamping = 0.7,
+	adsSpeed = 16,
+	raiseTime = 0.25,
+	boltAnimPortion = 0.75, -- boltTime 중 볼트 동작이 차지하는 비율 (나머지는 제자리)
+	sleeveColor = Color3.fromRGB(60, 70, 90), -- 팔을 못 가져올 때 대신 쓰는 색
 }
 ViewModel.Settings = VM
 
+-- 2차 스프링 (위치 x, 속도 v): 목표 0 으로 돌아감
+type Spring = { x: number, v: number }
+local function newSpring(): Spring
+	return { x = 0, v = 0 }
+end
+local function stepSpring(s: Spring, k: number, zeta: number, dt: number)
+	local c = 2 * zeta * math.sqrt(k)
+	-- 큰 dt 에서 튀지 않게 잘게 나눠 계산
+	local steps = math.max(math.ceil(dt / (1 / 240)), 1)
+	local h = dt / steps
+	for _ = 1, steps do
+		local a = -k * s.x - c * s.v
+		s.v += a * h
+		s.x += s.v * h
+	end
+end
+
 local current: Model? = nil
 local currentId: string? = nil
-local gripOffset = CFrame.identity -- 손잡이 기준 → 모델 피벗
+local gripOffset = CFrame.identity
 local gunLength = 3
-local muzzleLocal: Vector3? = nil -- 손잡이 기준 총구 위치
-local arms: { Part } = {}
+local muzzleLocal: Vector3? = nil
+type ArmSet = { hand: BasePart?, fore: BasePart?, single: BasePart? }
+local rightArm: ArmSet = {}
+local leftArm: ArmSet = {}
 local raiseStart = 0
-local swayRot = Vector2.zero
-local kick = 0
+local kickZ, kickP, kickR = newSpring(), newSpring(), newSpring()
+local swayX, swayY = newSpring(), newSpring()
 local adsBlend = 0
 
-local function part(name: string, size: Vector3, color: Color3, parent: Instance): Part
-	local p = Instance.new("Part")
-	p.Name = name
-	p.Size = size
-	p.Color = color
+local function smooth(a: number, b: number, t: number): number
+	local u = math.clamp((t - a) / (b - a), 0, 1)
+	return u * u * (3 - 2 * u)
+end
+
+local function setupPart(p: BasePart)
 	p.Anchored = true
 	p.CanCollide = false
 	p.CanQuery = false
 	p.CanTouch = false
 	p.CastShadow = false
-	p.Material = Enum.Material.SmoothPlastic
-	p.Parent = parent
-	return p
+	p.Massless = true
 end
 
-local function placeholder(): Model
-	local m = Instance.new("Model")
-	local body = part("Body", Vector3.new(0.35, 0.5, 2.6), Color3.fromRGB(35, 35, 40), m)
-	body.Material = Enum.Material.Metal
-	local mag = part("Mag", Vector3.new(0.25, 0.6, 0.35), Color3.fromRGB(25, 25, 28), m)
-	mag.CFrame = body.CFrame * CFrame.new(0, -0.5, -0.2)
-	local sight = part("Sight", Vector3.new(0.15, 0.2, 0.5), Color3.fromRGB(25, 25, 28), m)
-	sight.CFrame = body.CFrame * CFrame.new(0, 0.35, 0.3)
+local function placeholderGun(parent: Model)
+	local function part(size: Vector3, cf: CFrame, color: Color3): Part
+		local p = Instance.new("Part")
+		p.Size = size
+		p.CFrame = cf
+		p.Color = color
+		p.Material = Enum.Material.Metal
+		setupPart(p)
+		p.Parent = parent
+		return p
+	end
+	local body = part(Vector3.new(0.35, 0.5, 2.6), CFrame.identity, Color3.fromRGB(35, 35, 40))
+	part(Vector3.new(0.25, 0.6, 0.35), CFrame.new(0, -0.5, -0.2), Color3.fromRGB(25, 25, 28))
+	part(Vector3.new(0.15, 0.2, 0.5), CFrame.new(0, 0.35, 0.3), Color3.fromRGB(25, 25, 28))
 	local muzzle = Instance.new("Attachment")
 	muzzle.Name = "Muzzle"
 	muzzle.Position = Vector3.new(0, 0.05, -1.3)
 	muzzle.Parent = body
-	return m
+end
+
+-- 내 캐릭터 팔 복제 (R6: 팔 통짜 / R15: 아래팔 + 손). 옷(Shirt) 이 보이려면 같은 이름 + Humanoid 필요
+local function cloneArms(m: Model)
+	local char = Players.LocalPlayer.Character
+	rightArm, leftArm = {}, {}
+	if not char then
+		return
+	end
+	local function grab(name: string): BasePart?
+		local src = char:FindFirstChild(name)
+		if not (src and src:IsA("BasePart")) then
+			return nil
+		end
+		local ok, c = pcall(function()
+			return src:Clone()
+		end)
+		if not ok or not c then
+			return nil
+		end
+		for _, d in c:GetChildren() do
+			if not (d:IsA("Decal") or d:IsA("SpecialMesh") or d:IsA("SurfaceAppearance") or d:IsA("WrapLayer")) then
+				d:Destroy() -- 관절/부착물/스크립트 제거
+			end
+		end
+		setupPart(c)
+		c.Parent = m
+		return c
+	end
+	if char:FindFirstChild("Right Arm") then -- R6
+		rightArm.single = grab("Right Arm")
+		leftArm.single = grab("Left Arm")
+	else -- R15
+		rightArm.fore, rightArm.hand = grab("RightLowerArm"), grab("RightHand")
+		leftArm.fore, leftArm.hand = grab("LeftLowerArm"), grab("LeftHand")
+	end
+	-- 옷: Humanoid + Shirt/BodyColors 가 같이 있어야 팔에 옷 무늬가 입혀짐
+	local hum = Instance.new("Humanoid")
+	hum.EvaluateStateMachine = false
+	hum.RequiresNeck = false
+	hum.BreakJointsOnDeath = false
+	hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+	hum.Parent = m
+	for _, cls in { "Shirt", "BodyColors" } do
+		local src = char:FindFirstChildOfClass(cls)
+		if src then
+			local ok, c = pcall(function()
+				return src:Clone()
+			end)
+			if ok and c then
+				c.Parent = m
+			end
+		end
+	end
 end
 
 function ViewModel.Destroy()
@@ -70,11 +158,10 @@ function ViewModel.Destroy()
 		current:Destroy()
 	end
 	current, currentId, muzzleLocal = nil, nil, nil
-	table.clear(arms)
+	rightArm, leftArm = {}, {}
 end
 
--- 무기 바꾸면 새로 만듦 (아래에서 올라오는 모션부터)
-function ViewModel.Set(weaponId: string, armColor: Color3?)
+function ViewModel.Set(weaponId: string)
 	if currentId == weaponId and current and current.Parent then
 		return
 	end
@@ -82,32 +169,30 @@ function ViewModel.Set(weaponId: string, armColor: Color3?)
 	currentId = weaponId
 	local folder = ReplicatedStorage:FindFirstChild("WeaponModels")
 	local template = folder and folder:FindFirstChild(weaponId)
-	local m = Instance.new("Model")
-	m.Name = "ViewModel"
-	local src: Instance = template and template:Clone() or placeholder()
-	for _, c in src:GetChildren() do
-		c.Parent = m
+	local gun = Instance.new("Model")
+	gun.Name = "Gun"
+	if template then
+		for _, c in template:Clone():GetChildren() do
+			c.Parent = gun
+		end
+	else
+		placeholderGun(gun)
 	end
-	for _, d in m:GetDescendants() do
+	for _, d in gun:GetDescendants() do
 		if d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ModuleScript") or d:IsA("JointInstance") or d:IsA("WeldConstraint") then
 			d:Destroy()
 		elseif d:IsA("BasePart") then
-			d.Anchored = true
-			d.CanCollide = false
-			d.CanQuery = false
-			d.CanTouch = false
-			d.CastShadow = false
+			setupPart(d)
 		end
 	end
-	-- 기준 파트 고정 (나중에 팔을 넣어도 피벗이 안 바뀌게)
-	local primary = m:FindFirstChildWhichIsA("BasePart", true)
+	local primary = gun:FindFirstChildWhichIsA("BasePart", true)
 	if not primary then
-		m:Destroy()
+		gun:Destroy()
 		return
 	end
-	m.PrimaryPart = primary
-	-- 방향 찾기: 가장 긴 축 = 총열, 두 번째 = 위아래, 총구(Muzzle) 쪽이 앞
-	local bbCF, size = m:GetBoundingBox()
+	gun.PrimaryPart = primary
+	-- 방향: 가장 긴 축 = 총열, 두 번째 = 위아래, Muzzle 쪽이 앞
+	local bbCF, size = gun:GetBoundingBox()
 	local axes = {
 		{ v = bbCF.RightVector, len = size.X },
 		{ v = bbCF.UpVector, len = size.Y },
@@ -117,123 +202,164 @@ function ViewModel.Set(weaponId: string, armColor: Color3?)
 		return a.len > b.len
 	end)
 	local fwd, len, up = axes[1].v, axes[1].len, axes[2].v
-	local mz = m:FindFirstChild("Muzzle", true)
-	local mzPos = mz and (mz:IsA("Attachment") and mz.WorldPosition or mz:IsA("BasePart") and mz.Position) or nil
+	local function muzzleWorld(): Vector3?
+		local mz = gun:FindFirstChild("Muzzle", true)
+		if mz and mz:IsA("Attachment") then
+			return mz.WorldPosition
+		elseif mz and mz:IsA("BasePart") then
+			return mz.Position
+		end
+		return nil
+	end
+	local mzPos = muzzleWorld()
 	if mzPos and (mzPos - bbCF.Position):Dot(fwd) < 0 then
 		fwd = -fwd
 	end
-	-- 너무 길면 줄임
 	if len > VM.maxLength then
 		local s = VM.maxLength / len
-		m:ScaleTo(m:GetScale() * s)
-		bbCF, size = m:GetBoundingBox()
+		gun:ScaleTo(gun:GetScale() * s)
+		bbCF = gun:GetBoundingBox()
 		len *= s
-		if mz then
-			mzPos = mz:IsA("Attachment") and mz.WorldPosition or (mz :: BasePart).Position
-		end
+		mzPos = muzzleWorld()
 	end
 	gunLength = len
 	local stock = bbCF.Position - fwd * len / 2
 	local grip = CFrame.fromMatrix(stock + fwd * len * VM.grip, fwd:Cross(up), up, -fwd)
-	gripOffset = grip:Inverse() * m:GetPivot()
+	gripOffset = grip:Inverse() * gun:GetPivot()
 	muzzleLocal = grip:PointToObjectSpace(mzPos or (bbCF.Position + fwd * len / 2))
-	-- 팔 (오른팔 = 손잡이, 왼팔 = 총열 받침)
-	local color = armColor or VM.armColor
-	for _, name in { "RightArm", "LeftArm" } do
-		local arm = part(name, Vector3.new(0.42, 0.42, 1.9), VM.sleeveColor, m)
-		local hand = part(name .. "Hand", Vector3.new(0.38, 0.38, 0.4), color, m)
-		table.insert(arms, arm)
-		table.insert(arms, hand)
-	end
+
+	local m = Instance.new("Model")
+	m.Name = "ViewModel"
+	gun.Parent = m
+	cloneArms(m)
 	m.Parent = workspace.CurrentCamera
 	current = m
 	raiseStart = os.clock()
-	kick, adsBlend = 0, 0
+	kickZ, kickP, kickR = newSpring(), newSpring(), newSpring()
+	adsBlend = 0
 end
 
-function ViewModel.Kick(amount: number?)
-	kick = math.min(kick + (amount or 1), 1.6)
+-- 쏠 때: 스프링에 "탁" 충격 (strength 1 = 한 발 세게, 연사는 작게)
+function ViewModel.Kick(strength: number?)
+	local s = strength or 1
+	kickZ.v += VM.kickBack * 60 * s
+	kickP.v += VM.kickUp * 60 * s
+	kickR.v += (math.random() * 2 - 1) * VM.kickRoll * 60 * s
 end
 
--- 총구 월드 위치 (내 총알 줄기/섬광 시작점)
-function ViewModel.MuzzlePosition(): Vector3?
-	if not current or not current.Parent or not muzzleLocal then
+local function gunFrame(): CFrame?
+	local gun = current and current:FindFirstChild("Gun")
+	if not gun or not gun:IsA("Model") then
 		return nil
 	end
-	local gripCF = current:GetPivot() * gripOffset:Inverse()
-	return gripCF:PointToWorldSpace(muzzleLocal)
+	return gun:GetPivot() * gripOffset:Inverse()
 end
 
--- 총 방향 (탄피 튀는 방향용)
+function ViewModel.MuzzlePosition(): Vector3?
+	local g = gunFrame()
+	return g and muzzleLocal and g:PointToWorldSpace(muzzleLocal) or nil
+end
+
 function ViewModel.Axes(): (Vector3?, Vector3?)
-	if not current or not current.Parent then
+	local g = gunFrame()
+	if not g then
 		return nil, nil
 	end
-	local gripCF = current:GetPivot() * gripOffset:Inverse()
-	return gripCF.RightVector, gripCF.UpVector
+	return g.RightVector, g.UpVector
 end
 
--- 매 프레임: state = { ads, hidden, mouseDelta, bolt(0~1 진행, nil=아님), reload(bool), dt }
+-- 팔 배치: 손 끝이 handPos, 팔은 어깨(화면 밖) 쪽으로 뻗음
+local function placeArm(set: ArmSet, handPos: Vector3, shoulder: Vector3, camCF: CFrame)
+	local upDir = shoulder - handPos
+	if upDir.Magnitude < 0.01 then
+		return
+	end
+	upDir = upDir.Unit
+	local right = upDir:Cross(camCF.LookVector)
+	right = right.Magnitude > 0.01 and right.Unit or camCF.RightVector
+	local function orient(center: Vector3): CFrame
+		return CFrame.fromMatrix(center, right, upDir)
+	end
+	if set.single then -- R6: 아래쪽 끝 = 손
+		set.single.CFrame = orient(handPos + upDir * set.single.Size.Y / 2)
+	else
+		local handLen = set.hand and set.hand.Size.Y or 0.3
+		if set.hand then
+			set.hand.CFrame = orient(handPos + upDir * handLen / 2)
+		end
+		if set.fore then
+			set.fore.CFrame = orient(handPos + upDir * (handLen + set.fore.Size.Y / 2))
+		end
+	end
+end
+
+-- 매 프레임: state = { ads, hidden, mouseDelta, bolt(0~1|nil), reload(0~1|nil), dt }
 function ViewModel.Update(cam: Camera, state)
 	if not current or not current.Parent then
 		return
 	end
-	local dt = state.dt
-	-- 숨김 (스나 조준경 화면 중)
+	local dt = math.min(state.dt, 1 / 20)
 	for _, d in current:GetDescendants() do
-		if d:IsA("BasePart") then
-			d.LocalTransparencyModifier = state.hidden and 1 or 0
+		if d:IsA("BasePart") or d:IsA("Decal") then
+			(d :: any).LocalTransparencyModifier = state.hidden and 1 or 0
 		end
 	end
 	if state.hidden then
 		return
 	end
 	adsBlend += ((state.ads and 1 or 0) - adsBlend) * math.min(dt * VM.adsSpeed, 1)
-	-- 스웨이: 마우스 반대쪽으로 살짝 늦게 따라옴
+	-- 스프링들
 	local md: Vector2 = state.mouseDelta
-	swayRot += Vector2.new(-md.X, -md.Y) * VM.swayAmount * (1 - adsBlend * 0.7)
-	swayRot -= swayRot * math.min(dt * VM.swayReturn, 1)
-	swayRot = Vector2.new(math.clamp(swayRot.X, -0.15, 0.15), math.clamp(swayRot.Y, -0.12, 0.12))
-	kick -= kick * math.min(dt * VM.kickReturn, 1)
+	-- 화면을 돌린 반대쪽으로 총이 살짝 늦게 따라옴
+	swayX.v += md.X * VM.swayAmount * 60 * (1 - adsBlend * 0.75)
+	swayY.v += md.Y * VM.swayAmount * 60 * (1 - adsBlend * 0.75)
+	stepSpring(swayX, VM.swayStiffness, VM.swayDamping, dt)
+	stepSpring(swayY, VM.swayStiffness, VM.swayDamping, dt)
+	stepSpring(kickZ, VM.kickStiffness, VM.kickDamping, dt)
+	stepSpring(kickP, VM.kickStiffness, VM.kickDamping, dt)
+	stepSpring(kickR, VM.kickStiffness * 0.8, VM.kickDamping, dt)
 	local t = os.clock()
-	local breathe = math.sin(t * 1.6) * 0.012 * (1 - adsBlend * 0.8)
-	-- 꺼낼 때 아래에서 올라옴
-	local raise = math.clamp((t - raiseStart) / VM.raiseTime, 0, 1)
-	raise = 1 - (1 - raise) ^ 3
+	local breathe = math.sin(t * 1.7) * 0.01 * (1 - adsBlend * 0.8)
+	local raise = 1 - (1 - math.clamp((t - raiseStart) / VM.raiseTime, 0, 1)) ^ 3
+
 	local base = VM.hip:Lerp(VM.ads, adsBlend)
 	local cf = cam.CFrame * base
-		* CFrame.new(0, -0.9 * (1 - raise) + breathe, 0) * CFrame.Angles(math.rad(-35) * (1 - raise), 0, 0)
-		* CFrame.Angles(swayRot.Y, swayRot.X, swayRot.X * 0.6)
-		* CFrame.new(0, 0, VM.kickBack * kick) * CFrame.Angles(math.rad(VM.kickUp) * kick, 0, 0)
-	-- 장전: 총을 내리고 기울임
+		* CFrame.new(0, -0.8 * (1 - raise) + breathe, 0) * CFrame.Angles(math.rad(-30) * (1 - raise), 0, 0)
+		* CFrame.Angles(math.clamp(swayY.x, -0.12, 0.12), math.clamp(swayX.x, -0.15, 0.15), math.clamp(swayX.x, -0.15, 0.15) * 0.5)
+		* CFrame.new(0, 0, math.clamp(kickZ.x, -0.2, 0.6)) * CFrame.Angles(math.clamp(kickP.x, -0.2, 0.5), 0, kickR.x)
+
+	-- 장전: 기울이기 → 탄창 빼기 → 꽂기 → 탁 → 복귀
+	local leftDrop = 0
 	if state.reload then
-		cf *= CFrame.new(0, -0.35, 0.1) * CFrame.Angles(math.rad(-20), math.rad(12), math.rad(35))
+		local r = state.reload
+		local tilt = smooth(0, 0.12, r) * (1 - smooth(0.85, 1, r))
+		local out = smooth(0.15, 0.32, r) * (1 - smooth(0.45, 0.62, r))
+		local slap = smooth(0.62, 0.68, r) * (1 - smooth(0.68, 0.8, r))
+		cf *= CFrame.new(0, -0.25 * tilt, 0) * CFrame.Angles(math.rad(-12) * tilt, math.rad(10) * tilt, math.rad(32) * tilt)
+		cf *= CFrame.new(0, 0.06 * slap, 0) * CFrame.Angles(math.rad(-4) * slap, 0, 0)
+		leftDrop = out
 	end
-	-- 볼트: 총을 오른쪽으로 굴리고 오른손이 뒤로 당김
-	local boltPull = 0
+	-- 볼트: 굴리기 → 당기기 → 밀기 → 복귀 (boltAnimPortion 안에 빠르게 끝냄)
+	local pull = 0
 	if state.bolt then
-		local b = math.sin(math.clamp(state.bolt, 0, 1) * math.pi) -- 0 → 1 → 0
-		cf *= CFrame.Angles(0, 0, math.rad(-18) * b) * CFrame.new(0, -0.08 * b, 0)
-		boltPull = b
+		local b = math.clamp(state.bolt / VM.boltAnimPortion, 0, 1)
+		local roll = smooth(0, 0.15, b) * (1 - smooth(0.7, 0.9, b))
+		pull = smooth(0.15, 0.35, b) * (1 - smooth(0.45, 0.62, b))
+		local thud = smooth(0.58, 0.63, b) * (1 - smooth(0.63, 0.75, b)) -- 밀어 넣을 때 탁
+		cf *= CFrame.Angles(math.rad(4) * roll, 0, math.rad(-24) * roll) * CFrame.new(0.05 * roll, -0.06 * roll, 0)
+		cf *= CFrame.new(0, 0, -0.05 * thud) * CFrame.Angles(math.rad(-3) * thud, 0, 0)
 	end
-	current:PivotTo(cf * gripOffset)
-	-- 팔 위치: 오른팔은 손잡이에서 오른쪽 뒤 아래로, 왼팔은 총열 아래에서 왼쪽 뒤 아래로
-	local foreZ = -gunLength * 0.38
-	local rHand = cf * CFrame.new(0, -0.15, 0.1 + boltPull * 0.45)
-	local lHand = cf * CFrame.new(0, -0.22, foreZ)
-	local function arm(armPart: Part, handPart: Part, handCF: CFrame, shoulder: Vector3)
-		handPart.CFrame = handCF
-		local s = cam.CFrame:PointToWorldSpace(shoulder)
-		local h = handCF.Position
-		local mid = (s + h) / 2
-		local length = (h - s).Magnitude
-		armPart.Size = Vector3.new(0.42, 0.42, math.max(length, 0.5))
-		armPart.CFrame = CFrame.lookAt(mid, h)
+
+	local gun = current:FindFirstChild("Gun")
+	if gun and gun:IsA("Model") then
+		gun:PivotTo(cf * gripOffset)
 	end
-	if #arms >= 4 then
-		arm(arms[1], arms[2], rHand, Vector3.new(0.9, -1.5, 0.3):Lerp(Vector3.new(0.5, -1.3, 0.2), adsBlend))
-		arm(arms[3], arms[4], lHand, Vector3.new(-0.9, -1.5, 0):Lerp(Vector3.new(-0.6, -1.3, -0.1), adsBlend))
-	end
+	-- 손: 오른손 = 손잡이(볼트 땐 뒤로 당김, 손 위로), 왼손 = 총열 받침(장전 땐 아래로 탄창 빼기)
+	local rHand = cf:PointToWorldSpace(Vector3.new(0.05 + 0.25 * pull, -0.25 + 0.35 * pull, 0.15 + 0.55 * pull))
+	local lHand = cf:PointToWorldSpace(Vector3.new(-0.05, -0.3 - 0.9 * leftDrop, -gunLength * (VM.foregrip - VM.grip) + 0.4 * leftDrop))
+	local camCF = cam.CFrame
+	placeArm(rightArm, rHand, camCF:PointToWorldSpace(Vector3.new(1.2, -2.2, 0.6):Lerp(Vector3.new(0.7, -2, 0.6), adsBlend)), camCF)
+	placeArm(leftArm, lHand, camCF:PointToWorldSpace(Vector3.new(-1.1, -2.2, -0.2):Lerp(Vector3.new(-0.8, -2, -0.3), adsBlend)), camCF)
 end
 
 return ViewModel

@@ -118,7 +118,8 @@ WeaponConfig.General = {
 	scopeShift = 0.45, -- 휙 돌릴 때 렌즈가 반대로 밀리는 양 (마우스 1픽셀당 화면 픽셀)
 	mouseSensitivity = 0.0035,
 	zoomSensitivityScale = 0.4, -- 조준 중엔 마우스가 이만큼 느리게
-	recoilRecover = 6, -- 반동이 원래 조준으로 돌아오는 빠르기 (클수록 빨리)
+	recoilStiffness = 90, -- 반동 스프링: 클수록 빨리 제자리로
+	recoilDamping = 0.5, -- 0.4~0.6 = 살짝 튕기며 복귀 (쫄깃), 1 = 튕김 없이
 	recoilMax = 16, -- 연사로 쌓이는 반동 최대 (도)
 	pitchMin = -70,
 	pitchMax = 60,

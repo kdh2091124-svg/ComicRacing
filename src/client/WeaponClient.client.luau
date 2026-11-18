@@ -23,7 +23,9 @@ local DEFAULT_FOV = 70
 
 local active = false
 local yaw, pitch = 0, 0
-local recoilP, recoilY = 0, 0 -- 반동 (라디안): 쏘면 튀고, 매 프레임 원래 조준으로 돌아옴
+local recoilP, recoilY = 0, 0 -- 반동 (라디안): 쏘면 튀고, 스프링으로 원래 조준으로 돌아옴
+local recoilVP, recoilVY = 0, 0 -- 반동 스프링 속도
+local reloadStart: number? = nil
 local shake, fovKick, bloom = 0, 0, 0 -- 화면 흔들림(스터드), 시야 펀치(도), 조준점 벌어짐(0~1)
 local TweenService = game:GetService("TweenService")
 local holding, zooming = false, false
@@ -423,9 +425,12 @@ local function fire()
 	end
 	-- 반동: 화면이 위로(+좌우 살짝) 튀었다가 매 프레임 원래 조준으로 돌아옴
 	local kick = math.rad(def.recoil or 1) * (zooming and 0.7 or 1)
-	recoilP = math.min(recoilP + kick, math.rad(G.recoilMax))
-	local side = math.rad(def.recoilSide or 0)
-	recoilY += (math.random() * 2 - 1) * side
+	-- 절반은 바로 탁, 절반은 속도로 → 순간 튀고 쭉 올라갔다 스프링으로 돌아옴
+	recoilP = math.min(recoilP + kick * 0.5, math.rad(G.recoilMax))
+	recoilVP += kick * 18
+	local side = math.rad(def.recoilSide or 0) * (math.random() * 2 - 1)
+	recoilY += side * 0.5
+	recoilVY += side * 14
 	-- 화면 흔들림 + 시야 펀치 + 조준점 벌어짐
 	shake = math.max(shake, def.shake or 0.15)
 	fovKick += def.fovKick or 1
@@ -450,8 +455,8 @@ local function enter(char: Model, vehicle: Model?)
 	active = true
 	gui.Enabled = true
 	holding, zooming = false, false
-	recoilP, recoilY = 0, 0
-	rmbDown, boltUntil = false, 0
+	recoilP, recoilY, recoilVP, recoilVY = 0, 0, 0, 0
+	rmbDown, boltUntil, reloadStart = false, 0, nil
 	local look = (vehicle and vehicle.PrimaryPart and vehicle.PrimaryPart.CFrame.LookVector) or Vector3.new(0, 0, -1)
 	yaw = math.atan2(-look.X, -look.Z)
 	pitch = 0
@@ -521,9 +526,17 @@ local function enter(char: Model, vehicle: Model?)
 		yaw -= md.X * sens
 		pitch = math.clamp(pitch - md.Y * sens, math.rad(G.pitchMin), math.rad(G.pitchMax))
 		-- 반동 되돌아오기
-		local back = math.min(dt * G.recoilRecover, 1)
-		recoilP -= recoilP * back
-		recoilY -= recoilY * back
+		-- 반동 스프링: 탁 튀었다가 살짝 아래로 튕기며 제자리 (쫄깃)
+		local k = G.recoilStiffness
+		local cdamp = 2 * G.recoilDamping * math.sqrt(k)
+		local steps = math.max(math.ceil(dt * 240), 1)
+		local h = dt / steps
+		for _ = 1, steps do
+			recoilVP += (-k * recoilP - cdamp * recoilVP) * h
+			recoilP += recoilVP * h
+			recoilVY += (-k * recoilY - cdamp * recoilVY) * h
+			recoilY += recoilVY * h
+		end
 		shake = math.max(shake - dt * 6 * math.max(shake, 0.3), 0)
 		fovKick -= fovKick * math.min(dt * 10, 1)
 		bloom -= bloom * math.min(dt * 8, 1)
@@ -574,18 +587,24 @@ local function enter(char: Model, vehicle: Model?)
 		end
 		-- 1인칭 내 무기
 		if G.firstPerson and def then
-			local armPart = c:FindFirstChild("Right Arm") or c:FindFirstChild("RightHand")
-			ViewModel.Set(def.id, armPart and armPart:IsA("BasePart") and armPart.Color or nil)
+			ViewModel.Set(def.id)
 			local boltProgress = nil
 			if nowT < boltUntil and def.boltTime then
 				boltProgress = 1 - (boltUntil - nowT) / def.boltTime
+			end
+			-- 장전 진행도 (0~1): 장전이 시작된 순간부터 reloadTime 동안
+			local reloading = player:GetAttribute("Reloading") == true
+			if reloading and not reloadStart then
+				reloadStart = nowT
+			elseif not reloading then
+				reloadStart = nil
 			end
 			ViewModel.Update(cam, {
 				ads = zooming and not scopeOn,
 				hidden = scopeOn,
 				mouseDelta = md,
 				bolt = boltProgress,
-				reload = player:GetAttribute("Reloading") == true,
+				reload = reloadStart and math.clamp((nowT - reloadStart) / def.reloadTime, 0, 1) or nil,
 				dt = dt,
 			})
 		end
