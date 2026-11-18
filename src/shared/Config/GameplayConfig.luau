@@ -4,8 +4,8 @@ local GameplayConfig = {}
 
 -- 아케이드 보정 (문서 2-1). 구현하면서 조율.
 GameplayConfig.Physics = {
-	highSpeedSteerFactor = 0.4, -- 최고속일 때 조향각 = 최대의 40% (일반 코너는 그냥 A/D 로 돌 수 있게)
-	steerSpeed = 6, -- 핸들 꺾이는 속도 (낮을수록 부드럽고 묵직함)
+	highSpeedSteerFactor = 0.5, -- 최고속일 때 조향각 = 최대의 50%
+	steerSpeed = 7, -- 핸들 꺾이는 속도
 	steerReturnSpeed = 10, -- 핸들 놓으면 가운데로 돌아오는 속도 (빠를수록 손 떼면 바로 직진)
 	antiPitchRoll = 1.0, -- 바퀴 힘(가속/코너)이 차를 들어올리는 효과 제거 (1 = 윌리/옆 들림 없음, 낮추면 기울어짐 생김)
 	uprightGround = 12, -- 땅에서 수평 유지 힘
@@ -28,10 +28,11 @@ GameplayConfig.Physics = {
 		holdRampTime = 0, -- 꾹 누른 뒤 baseYaw 까지 걸리는 시간 (0 = 즉시)
 		entryBlend = 0.85, -- 누르는 순간 바로 그립을 이만큼 놓음
 		blendIn = 10, -- 드리프트 들어가는 빠르기
-		blendOut = 0.8, -- Space 떼고 드리프트 힘이 빠지는 빠르기 (낮을수록 스르륵)
+		blendOut = 2.0, -- Space 떼면 드리프트 힘이 빠지는 빠르기 (높을수록 떼자마자 내 조작대로)
 		tireLatCut = 0.97, -- 드리프트 중 타이어 옆 힘 97% 줄임 (남으면 회전을 막음)
 		baseYaw = 1.7, -- Space 누르고 있을 때 회전 속도 (라디안/초)
-		steerYaw = 1.2, -- 안쪽 키 = +1.2 (급커브/U턴), 바깥 키 = -1.2 (완만하게 길게)
+		steerYaw = 1.2, -- 안쪽 키 = 더 깊게 (+1.2)
+		outwardYaw = 2.6, -- 바깥 키 = 반대로 돌려서 "펴기" (1.7-2.6 = -0.9 → 차가 실제로 펴짐). 전엔 덜 돌기만 해서 못 펴고 박았음
 		spinGuardAngle = 75, -- 이 각도 넘을 때만 스핀 방지
 		yawResponse = 8, -- 회전 반응 (낮을수록 스윽, 높을수록 탁)
 		carve = 0.6, -- 차가 도는 만큼 진행 방향도 바로 휘는 비율
@@ -39,9 +40,9 @@ GameplayConfig.Physics = {
 		engineCut = 0.75, -- 드리프트 중 엔진 힘 75% 줄임
 		speedKeep = 0, -- 엑셀 밟을 때 추가 속도 보충 (가속도)
 		drag = 22, -- 드리프트 중 감속 (가속도). 오래 끌수록 느려짐
-		switchHoldTime = 0.25, -- 드리프트 중 반대 방향키를 이 초만큼 누르면 반대쪽 드리프트로 전환
-		recoverTime = 0.7, -- 드리프트 끝난 뒤 옆 그립이 완전히 돌아오기까지 걸리는 시간 (초)
-		recoverMinGrip = 0.3, -- 끝난 직후 옆 그립 (30% 에서 시작해서 천천히 100%)
+		switchHoldTime = 0.45, -- 바깥 키를 이 초 이상 계속 누르면 반대쪽 드리프트로 전환 (짧게 누르면 펴기만)
+		recoverTime = 0.3, -- 드리프트 끝난 뒤 옆 그립이 완전히 돌아오기까지 (짧게 → 떼면 바로 원하는 방향으로)
+		recoverMinGrip = 0.7, -- 끝난 직후 옆 그립 (70% 에서 바로 시작)
 		recoverSteerBoost = 4, -- 회복 중 방향키를 누르면 회복이 이 배수만큼 빨라짐 (반대로 바로 꺾기)
 	},
 	-- 평소 주행: 저속은 착 붙고, 빠를수록 점점 밀림
@@ -51,8 +52,8 @@ GameplayConfig.Physics = {
 	-- 평소(A/D) 코너 한계: 옆 가속도 = base + perSpeed × 속도 (studs/s²). 회전 한계 = 옆 가속도 / 속도
 	--   속도 40 → 초당 2.9   속도 100 → 초당 1.5   부스터 160 → 초당 1.2 (+부스터 접지 보너스)
 	--   드리프트는 속도 상관없이 초당 1.2 ~ 2.2 + 미끄러지며 도는 각도 → 급커브/U턴은 드리프트가 확실히 유리
-	normalLatAccelBase = 90,
-	normalLatAccelPerSpeed = 0.6,
+	normalLatAccelBase = 130,
+	normalLatAccelPerSpeed = 0.8,
 	-- 드리프트 탈출 부스트 (각도 유지하며 오래 미끄러질수록 단계 ↑, Space 떼면 발동)
 	DriftBoost = {
 		enabled = false, -- 개발자 요청으로 끔 (부스트 중 방향 잡기 어려움). 켜면 탈출 부스트 + 단계 표시 부활
@@ -89,7 +90,7 @@ GameplayConfig.Physics = {
 	groundGraceTime = 0.3, -- 바퀴가 잠깐 떠도 이 초까지는 땅에 있는 걸로 봐줌 (고속 드리프트 시작용)
 	frictionCircle = 0.35, -- 가속/브레이크가 옆 접지를 얼마나 깎는지 (1 = 실제 물리, 낮을수록 밟으면서 꺾어도 안 밀림)
 	boostGrip = 1.25, -- 부스터(Shift, 드리프트 탈출 부스트) 중 접지 +25%
-	gripLoadSmoothing = 0.75, -- 접지 계산 시 출렁임 무시 비율 (높을수록 고속에서 안정, 0 = 실제 물리)
+	gripLoadSmoothing = 0.9, -- 접지 계산 시 출렁임 무시 비율 (높을수록 고속에서 안정, 0 = 실제 물리)
 	slipLowSpeed = 6, -- 저속 떨림 방지용
 	holdSpeed = 4, -- 페달 안 밟고 이 속도 미만이면 제자리 버팀
 	holdGrip = 8, -- 버티는 힘

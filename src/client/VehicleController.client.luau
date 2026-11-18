@@ -548,7 +548,9 @@ local function step(dt: number)
 				holdFactor = D.holdRampTime > 0 and math.clamp(s.driftHold / D.holdRampTime, 0, 1) or 1
 			end
 			local base = D.tapYaw + (D.baseYaw - D.tapYaw) * holdFactor
-			local yawSpeed = (base + D.steerYaw * depthInput) * (stats.driftPower or 1)
+			-- 안쪽 키 = 더 깊게, 바깥 키 = 반대로 돌려서 실제로 펴짐 (내가 꺾은 대로 가게)
+			local steerPart = depthInput >= 0 and D.steerYaw * depthInput or D.outwardYaw * depthInput
+			local yawSpeed = (base + steerPart) * (stats.driftPower or 1)
 			-- 스핀 방지는 아주 깊을 때만
 			local angle = math.max(-dir * beta, 0) -- 지금 드리프트 방향 쪽 각도
 			local guard = math.clamp((math.rad(D.spinGuardAngle) - angle) / math.rad(15), 0, 1)

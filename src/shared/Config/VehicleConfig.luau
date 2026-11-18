@@ -17,14 +17,21 @@ VehicleConfig.BaseStats = {
 	grip = 1.1, -- 타이어 마찰계수 (1.0 = 무게만큼 옆으로 버팀). 클수록 덜 미끄러짐
 	driftPower = 1, -- 드리프트 회전 세기 배율 (차마다 다르게. 클수록 과감하게 돎)
 	suspensionRest = 2.4, -- 서스펜션 길이 (studs)
-	suspensionStiffness = 200, -- 스프링 세기 (무게 기준). 낮을수록 부드러움
-	suspensionDamping = 4, -- 출렁임 잡는 힘 (아주 조금). 높을수록 둔함, 2*sqrt(stiffness)=28 이면 거의 안 출렁
+	suspensionStiffness = 260, -- 스프링 세기 (무게 기준). 낮을수록 부드럽고 출렁임
+	suspensionDamping = 12, -- 출렁임 잡는 힘. 4 는 너무 통통 튐 → 12. 2*sqrt(stiffness)=32 이면 거의 안 출렁
 	wheelRadius = 1.2,
 	density = 0.7, -- 차체 밀도 (무게)
 	hp = 100, -- TEMP
 	boostPower = 0.45, -- 부스터 시 최고속/가속 +45%
 	boostDuration = 3, -- 부스터 풀충전으로 쓸 수 있는 초
 	boostRecharge = 0.12, -- 초당 충전량 (0~1)
+}
+
+-- 전체 속도 배율: 모든 차에 곱해짐 (차끼리 차이는 그대로 유지). 속도감 조절은 여기 하나로
+VehicleConfig.GlobalScale = {
+	maxSpeed = 1.4, -- 넓은 도로에 비해 느려서 +40%
+	acceleration = 1.2,
+	brake = 1.2,
 }
 
 -- 공통 서스펜션 배치 (물리용 보이지 않는 바퀴 위치).

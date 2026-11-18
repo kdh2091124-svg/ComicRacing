@@ -25,6 +25,13 @@ function StatCalculator.Compute(vehicleId: string, tuning: TuningState?): { [str
 		end
 	end
 
+	-- 전체 속도 배율 (VehicleConfig.GlobalScale)
+	for statName, mul in VehicleConfig.GlobalScale or {} do
+		if stats[statName] then
+			stats[statName] *= mul
+		end
+	end
+
 	local t = tuning or {}
 	if t.levels then
 		for itemId, level in t.levels do
