@@ -655,13 +655,13 @@ local function enter(char: Model, vehicle: Model?)
 				reloadStart = nowT
 				-- 리볼버: 실린더가 열리면 빈 탄피 6개가 쏟아짐
 				if ViewModel.CylinderPosition() then
-					-- 천천히 들어 올리는 동안 탄피가 촤르르 하나씩 미끄러져 떨어짐
-					for i = 0, 5 do
-						task.delay(def.reloadTime * (0.24 + i * 0.022), function()
+					-- 총구 세우고 탁! 터는 순간 탄피 6개가 한 번에 쏟아짐
+					for _ = 0, 5 do
+						task.delay(def.reloadTime * 0.16 + math.random() * 0.03, function()
 							local p = ViewModel.CylinderPosition()
 							if p then
 								local jitter = Vector3.new(math.random() - 0.5, 0, math.random() - 0.5) * 0.15
-								GunFX.Shell(p + jitter, Vector3.new(math.random() - 0.5, -1, math.random() - 0.5) * 0.25, -Vector3.yAxis * 0.2, { shell = "rifle" })
+								GunFX.Shell(p + jitter, Vector3.new(math.random() - 0.5, -2.5, math.random() - 0.5) * 0.25, -- 털어서 아래로 툭 -Vector3.yAxis * 0.2, { shell = "rifle" })
 							end
 						end)
 					end
