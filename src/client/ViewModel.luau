@@ -49,11 +49,14 @@ local VM = {
 	boltLift = 60, -- Bolt: 손잡이 들어 올리는 각도 (총열 축 기준, 도)
 	shotSlide = 0.22, -- Bolt: 연사 총은 쏠 때마다 뒤로 철컥 하는 거리
 	magDrop = 1.2, -- Mag: 장전 때 탄창이 빠지는 거리
+	throwGravity = 24, -- 던진 탄창/스피드로더가 떨어지는 중력 (작을수록 포물선이 길게 보임, 진짜 중력은 196)
+	throwLife = 1.4, -- 던진 것이 보이는 시간 (초)
+	armFollow = 0.5, -- 장전/볼트 때 총이 움직인 만큼 어깨도 따라감 (0 = 팔만 늘어남, 1 = 팔 전체가 같이 움직임)
 	coverOpen = 95, -- Cover(스나 볼트 창 덮개): 볼트 당길 때 열리는 각도
 	coverBounce = 12, -- Cover: 열리고 닫힐 때 덜컹 튕기는 각도
 	-- 리볼버: Cylinder(실린더), Hammer(공이치기), Trigger(방아쇠), CylinderHinge(실린더 여는 경첩 Attachment)
 	cylinderStep = 60, -- 한 발마다 실린더 도는 각도 (6연발 = 60)
-	cylinderSpinK = 260, -- 실린더 도는 스프링 세기 (클수록 빨리 돎, 너무 크면 순식간이라 안 보임)
+	cylinderSpinK = 70, -- 실린더 도는 스프링 세기 (클수록 빨리 돎, 너무 크면 순식간이라 안 보임)
 	cylinderSwing = 80, -- 장전 때 실린더가 왼쪽으로 열리는 각도
 	hammerCock = 35, -- 쏠 때 공이치기가 젖혀졌다 떨어지는 각도
 	triggerPull = 22, -- 쏠 때 방아쇠 당기는 각도
@@ -117,6 +120,7 @@ local modelScale = 1 -- 원본 모델 대비 지금 크기 (거리 값에 곱함
 local adsDist = 1.9 -- 이 무기의 조준 거리 (WeaponConfig.adsDistance)
 local hipCF = CFrame.new(1.05, -1.2, -2.5) -- 이 무기의 평소 위치 (WeaponConfig.vmHip)
 local adsRollRad = 0 -- 조준할 때 꺾는 각도 (리볼버 45°)
+local adsPos: Vector3? = nil -- 무기별 조준 위치 (WeaponConfig.vmAds): 있으면 가늠자를 화면 가운데 맞추지 않고 이 자리에서 조준점 쪽을 겨눔
 local oneHandedAds = false -- 조준하면 한손 (리볼버): 왼손이 빠지고 오른팔만 쭉
 local speedLoader: Model? = nil -- 리볼버 스피드로더 (장전 때만 보임)
 local cylSpinV = 0 -- 리볼버 실린더 헛도는 속도 (라디안/초, 점점 줄어듦)
@@ -187,35 +191,61 @@ local function localFX(): Folder
 	return f :: Folder
 end
 
--- 파트 묶음을 지금 모양 그대로 복제해서 물리로 날림 (던진 탄창, 버린 스피드로더). 3초 뒤 사라짐
+-- 던진 탄창/스피드로더: 진짜 물리 대신 직접 포물선 계산 (내 위치 기준이라 차가 달려도 뒤로 휙 사라지지 않고,
+-- 중력도 약하게 해서 위로 살짝 떴다가 떨어지는 포물선이 화면에 보임)
+type Flying = { model: Model, parts: { { part: BasePart, rel: CFrame } }, pos: Vector3, rot: CFrame, vel: Vector3, ang: Vector3, age: number }
+local flying: { Flying } = {}
+
 local function throwParts(list: { { part: BasePart, world: CFrame } }, vel: Vector3, ang: Vector3)
+	if #list == 0 then
+		return
+	end
 	local m = Instance.new("Model")
 	m.Name = "Thrown"
-	local first: BasePart? = nil
+	local center = Vector3.zero
+	for _, e in list do
+		center += e.world.Position
+	end
+	center /= #list
+	local parts = {}
 	for _, e in list do
 		local c = e.part:Clone()
 		c.CFrame = e.world
-		c.Anchored = false
-		c.CanCollide = true
+		c.Anchored = true
+		c.CanCollide = false
 		c.CanQuery = false
 		c.CanTouch = false
-		c.Massless = false
 		c.LocalTransparencyModifier = 0
 		c.Parent = m
-		if first then
-			local w = Instance.new("WeldConstraint")
-			w.Part0, w.Part1 = first, c
-			w.Parent = c
-		else
-			first = c
-		end
+		table.insert(parts, { part = c, rel = CFrame.new(-center) * e.world })
 	end
 	m.Parent = localFX()
-	if first then
-		first.AssemblyLinearVelocity = vel
-		first.AssemblyAngularVelocity = ang
+	local camPos = workspace.CurrentCamera.CFrame.Position
+	table.insert(flying, { model = m, parts = parts, pos = center - camPos, rot = CFrame.identity, vel = vel, ang = ang, age = 0 })
+	game:GetService("Debris"):AddItem(m, VM.throwLife + 0.5)
+end
+
+-- 날아가는 것들 한 프레임 (위치 = 내 카메라 위치 + 상대 위치, 방향은 월드 기준)
+local function stepFlying(camPos: Vector3, dt: number)
+	for i = #flying, 1, -1 do
+		local f = flying[i]
+		f.age += dt
+		if f.age > VM.throwLife or not f.model.Parent then
+			f.model:Destroy()
+			table.remove(flying, i)
+		else
+			f.vel += Vector3.new(0, -VM.throwGravity * dt, 0)
+			f.pos += f.vel * dt
+			local w = f.ang.Magnitude
+			if w > 0 then
+				f.rot = CFrame.fromAxisAngle(f.ang / w, w * dt) * f.rot
+			end
+			local root = CFrame.new(camPos + f.pos) * f.rot
+			for _, e in f.parts do
+				e.part.CFrame = root * e.rel
+			end
+		end
 	end
-	game:GetService("Debris"):AddItem(m, 3)
 end
 
 local function throwSet(set: Moving, gripCF: CFrame, vel: Vector3, ang: Vector3)
@@ -412,6 +442,7 @@ function ViewModel.Set(weaponId: string)
 	adsDist = def and def.adsDistance or VM.adsDistance
 	hipCF = (def and def.vmHip) and CFrame.new(def.vmHip) or VM.hip
 	adsRollRad = math.rad(def and def.adsRoll or 0)
+	adsPos = def and def.vmAds or nil
 	oneHandedAds = def ~= nil and def.oneHandedAds == true
 	modelScale = 1
 	if math.abs(len - want) > 0.05 then
@@ -739,6 +770,7 @@ function ViewModel.Update(cam: Camera, state)
 		return
 	end
 	local dt = math.min(state.dt, 1 / 20)
+	stepFlying(cam.CFrame.Position, dt)
 	for _, d in current:GetDescendants() do
 		if d:IsA("BasePart") or d:IsA("Decal") then
 			(d :: any).LocalTransparencyModifier = state.hidden and 1 or 0
@@ -785,10 +817,16 @@ function ViewModel.Update(cam: Camera, state)
 	local raise = backOut(math.clamp((t - raiseStart) / VM.raiseTime, 0, 1)) -- 꺼낼 때 살짝 넘쳤다 자리
 
 	-- 조준 위치: "Aim" 표시가 있으면 그 점이 화면 정중앙(눈앞)에 오게, 없으면 VM.ads
-	local adsCF = aimLocal and CFrame.new(-aimLocal.X, -aimLocal.Y, -adsDist - aimLocal.Z) or VM.ads
-	-- 조준할 때 꺾기 (리볼버 45° 갱스터): 가늠쇠 점을 중심으로 돌려서 조준은 그대로
-	if adsRollRad ~= 0 then
-		adsCF *= aboutPoint(aimLocal or Vector3.zero, CFrame.Angles(0, 0, adsRollRad))
+	local adsCF
+	if adsPos then
+		-- 리볼버: 가늠자를 가운데 맞추지 않음. 오른쪽으로 팔을 쭉 뻗어서 먼 조준점 쪽을 겨누고, 손목에서 꺾음(45° 갱스터)
+		adsCF = CFrame.lookAt(adsPos, Vector3.new(0, 0, -120)) * CFrame.Angles(0, 0, adsRollRad)
+	else
+		adsCF = aimLocal and CFrame.new(-aimLocal.X, -aimLocal.Y, -adsDist - aimLocal.Z) or VM.ads
+		-- 조준할 때 꺾기: 가늠쇠 점을 중심으로 돌려서 조준은 그대로
+		if adsRollRad ~= 0 then
+			adsCF *= aboutPoint(aimLocal or Vector3.zero, CFrame.Angles(0, 0, adsRollRad))
+		end
 	end
 	local base = hipCF:Lerp(adsCF, adsBlend)
 	-- 어깨를 중심으로 팔째 흔들림 (조준 중엔 어깨 대신 거의 눈앞 중심)
@@ -801,6 +839,7 @@ function ViewModel.Update(cam: Camera, state)
 		* CFrame.new(0, -0.9 * (1 - raise) + breathe, 0) * CFrame.Angles(math.rad(-35) * (1 - raise), math.rad(8) * (1 - raise), 0)
 		* CFrame.new(0, 0, math.clamp(kickZ.x, -0.2, 0.6)) * CFrame.Angles(math.clamp(kickP.x, -0.2, 0.5), 0, kickR.x)
 
+	local restPos = cf.Position -- 장전/볼트 동작 전 위치 (어깨가 따라가는 기준)
 	-- 장전: 기울이기 → 탄창 빼기 → 꽂기 → 탁 → 복귀
 	local leftDrop = 0
 	local r = state.reload or 0
@@ -822,6 +861,8 @@ function ViewModel.Update(cam: Camera, state)
 	local function crossed(x: number): boolean
 		return prevReload < x and r >= x
 	end
+	-- 팔꿈치 (손잡이 기준): 큰 동작은 여기를 축으로 돌려서 팔 전체가 움직이게
+	local elbowPt = Vector3.new(0, -0.9 * S0, 1.0 * S0)
 	local function bump(a: number, b: number, c: number, d: number): number
 		return smooth(a, b, r) * (1 - smooth(c, d, r))
 	end
@@ -838,13 +879,13 @@ function ViewModel.Update(cam: Camera, state)
 		leftAwayAmt = smooth(0, 0.05, r) * (1 - smooth(0.2, 0.26, r))
 		local wind = smooth(0, 0.06, r) * (1 - smooth(0.06, 0.085, r))
 		local snap = smooth(0.06, 0.095, r) * (1 - smooth(0.11, 0.26, r))
-		-- 팔은 그대로, 손목만 돌려서 탁 털기 (손잡이 바로 뒤가 축)
-		local wrist = Vector3.new(0, -0.08 * S0, 0.2 * S0)
-		cf *= aboutPoint(wrist, CFrame.Angles(0, 0, math.rad(10) * wind))
-		cf *= aboutPoint(wrist, CFrame.Angles(math.rad(-4) * snap, math.rad(-6) * snap, math.rad(-55) * snap))
+		-- 팔 전체로 탁 털기 (팔꿈치가 축, 어깨도 따라감)
+		cf *= aboutPoint(elbowPt, CFrame.Angles(0, 0, math.rad(8) * wind))
+		cf *= aboutPoint(elbowPt, CFrame.Angles(math.rad(-4) * snap, math.rad(-6) * snap, math.rad(-45) * snap))
 		if crossed(0.09) and magSet then
 			-- 총이 오른쪽으로 꺾이면서 아래쪽 탄창은 왼쪽 아래로 빙글빙글 날아감
-			throwSet(magSet, cf, -cam.CFrame.RightVector * 22 - cam.CFrame.UpVector * 3 + cam.CFrame.LookVector * 3, cam.CFrame.LookVector * 22)
+			-- 왼쪽 위로 휙 떴다가 포물선으로 떨어짐
+			throwSet(magSet, cf, -cam.CFrame.RightVector * 5 + Vector3.yAxis * 6 + cam.CFrame.LookVector * 1.5, cam.CFrame.LookVector * 9)
 			jolt(0.02, -0.04, -0.14)
 		end
 		if r >= 0.09 and r < 0.24 then
@@ -878,13 +919,14 @@ function ViewModel.Update(cam: Camera, state)
 	elseif state.reload and style == "sniper" then
 		-- 탄창 쪽이 보이게 살짝 기울임
 		local tilt = smooth(0, 0.08, r) * (1 - smooth(0.42, 0.5, r))
-		cf *= CFrame.new(0, -0.1 * tilt, 0) * CFrame.Angles(math.rad(-6) * tilt, math.rad(12) * tilt, math.rad(-22) * tilt)
+		cf *= aboutPoint(elbowPt, CFrame.Angles(math.rad(-6) * tilt, math.rad(12) * tilt, math.rad(-22) * tilt))
 		-- 1) 왼손이 탄창 버튼 딱 → 탄창이 빠져 떨어짐
 		if r < 0.12 and magSet then
 			leftTarget = magSet.pivot + Vector3.new(0, -0.1 * S0, -0.15 * S0)
 		end
 		if crossed(0.07) and magSet then
-			throwSet(magSet, cf, -Vector3.yAxis * 4 - cam.CFrame.RightVector * 2, Vector3.new(0, 0, 2))
+			-- 빠지면서 살짝 튀어 올랐다가 포물선으로 떨어짐
+			throwSet(magSet, cf, Vector3.yAxis * 3 - cam.CFrame.RightVector * 2 + cam.CFrame.LookVector * 0.5, cam.CFrame.LookVector * 3)
 			jolt(0.02, -0.03, 0.04)
 		end
 		if r >= 0.07 and r < 0.16 then
@@ -921,7 +963,7 @@ function ViewModel.Update(cam: Camera, state)
 		-- 장전은 한손: 왼손은 총에서 떼고(아래로), 스피드로더 들 때만 들어옴
 		leftAwayAmt = smooth(0, 0.04, r) * (1 - smooth(0.9, 1, r))
 		-- 팔꿈치 축으로 팔째 탁 (총만 꺾이지 않게)
-		local elbow = Vector3.new(0, -0.9 * S0, 1.0 * S0)
+		local elbow = elbowPt
 		cf *= aboutPoint(elbow, CFrame.Angles(math.rad(-6) * snapOpen, 0, math.rad(42) * snapOpen))
 		cylOpen = backOut(math.clamp((r - 0.015) / 0.035, 0, 1)) * (1 - smooth(0.67, 0.7, r))
 		if crossed(0.04) then
@@ -951,7 +993,7 @@ function ViewModel.Update(cam: Camera, state)
 		if crossed(0.61) and speedLoader then
 			local ringPart = speedLoader:FindFirstChild("Ring")
 			if ringPart and ringPart:IsA("BasePart") then
-				throwParts({ { part = ringPart, world = ringPart.CFrame } }, -cam.CFrame.RightVector * 7 - Vector3.yAxis * 4, Vector3.new(3, 5, 0)) -- 빈 링만 버림
+				throwParts({ { part = ringPart, world = ringPart.CFrame } }, -cam.CFrame.RightVector * 4 + Vector3.yAxis * 3, Vector3.new(3, 5, 0)) -- 빈 링만 버림 (포물선)
 			end
 		end
 		-- 4) 내리면서 "/" 방향(총 위쪽이 오른쪽)으로 탁 쳐서 실린더 닫기 (0.68) → 살짝 돎 → 제자리
@@ -979,7 +1021,7 @@ function ViewModel.Update(cam: Camera, state)
 	elseif state.reload then
 		-- 기본: 비틀며 들기 → 제자리
 		local tilt = math.min(backOut(math.clamp(r / 0.14, 0, 1)), 1 - backOut(math.clamp((r - 0.86) / 0.14, 0, 1)))
-		cf *= CFrame.new(0.08 * tilt, -0.2 * tilt, 0.05 * tilt) * CFrame.Angles(math.rad(-8) * tilt, math.rad(18) * tilt, math.rad(38) * tilt)
+		cf *= aboutPoint(elbowPt, CFrame.Angles(math.rad(-8) * tilt, math.rad(18) * tilt, math.rad(38) * tilt))
 	end
 	prevReload = r
 	-- 볼트: 굴리기 → 당기기 → 밀기 → 복귀 (boltAnimPortion 안에 빠르게 끝냄)
@@ -1009,7 +1051,8 @@ function ViewModel.Update(cam: Camera, state)
 		pull = smooth(0.15, 0.42, b) * (1 - smooth(0.48, 0.6, b)) -- 천천히 뒤로 당겨서(후퇴가 보이게) 잠깐 멈췄다 밀기
 		local thud = smooth(0.6, 0.64, b) * (1 - smooth(0.64, 0.75, b)) -- 밀어 넣을 때 탁
 		-- 총을 왼쪽으로 굴려서 오른쪽 볼트가 보이게 (예전 반대 방향)
-		cf *= CFrame.Angles(math.rad(4) * roll, 0, math.rad(rollAmt) * roll) * CFrame.new(-0.05 * roll, -0.06 * roll, 0)
+		-- 팔꿈치를 축으로 팔째 굴림
+		cf *= aboutPoint(Vector3.new(0, -0.9 * S0, 1.0 * S0), CFrame.Angles(math.rad(4) * roll, 0, math.rad(rollAmt) * roll))
 		cf *= CFrame.new(0, 0, -0.05 * thud) * CFrame.Angles(math.rad(-3) * thud, 0, 0)
 	end
 	-- 장전 중 볼트/노리쇠 (위 장전 동작에서 정함)
@@ -1211,11 +1254,14 @@ function ViewModel.Update(cam: Camera, state)
 	rSmooth = rSmooth and rSmooth:Lerp(rLocal, k) or rLocal
 	lSmooth = lSmooth and lSmooth:Lerp(lLocal, k) or lLocal
 	rHand, lHand = cf:PointToWorldSpace(rSmooth :: Vector3), cf:PointToWorldSpace(lSmooth :: Vector3)
-	-- 한손 조준(리볼버): 오른팔은 더 쭉 뻗음
+	-- 팔 전체 쓰기: 장전/볼트로 총이 움직인 만큼 어깨도 같이 따라감 (팔만 늘어나지 않고 팔째 움직임)
+	local follow = (cf.Position - restPos) * VM.armFollow
+	-- 한손 조준(리볼버): 오른팔은 더 쭉 뻗음. vmAds 무기는 어깨도 오른쪽 위로 (오른쪽으로 팔 뻗기)
 	local rShoulder = oneHandedAds and Vector3.new(0.6, -1.9, 0.5) or Vector3.new(1.2, -2.2, 0.6)
-	placeArm(rightArm, rHand, camCF:PointToWorldSpace(rShoulder:Lerp(Vector3.new(0.5, -1.8, 0.6), adsBlend)), camCF, cf.RightVector) -- 팔이 총과 같이 비틀림
+	local rShoulderAds = adsPos and Vector3.new(1.0, -1.5, 0.6) or Vector3.new(0.5, -1.8, 0.6)
+	placeArm(rightArm, rHand, camCF:PointToWorldSpace(rShoulder:Lerp(rShoulderAds, adsBlend)) + follow, camCF, cf.RightVector) -- 팔이 총과 같이 비틀림
 	if showLeft then
-		placeArm(leftArm, lHand, camCF:PointToWorldSpace(Vector3.new(-1.1, -2.2, -0.2):Lerp(Vector3.new(-0.8, -2, -0.3), adsBlend)), camCF, cf.RightVector)
+		placeArm(leftArm, lHand, camCF:PointToWorldSpace(Vector3.new(-1.1, -2.2, -0.2):Lerp(Vector3.new(-0.8, -2, -0.3), adsBlend)) + follow, camCF, cf.RightVector)
 	else
 		for _, p in { leftArm.single, leftArm.fore, leftArm.hand } do
 			if p then
