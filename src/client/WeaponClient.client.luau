@@ -164,6 +164,15 @@ local function gunner()
 	return nil
 end
 
+-- 지금 탄 퍼짐 (도): hipSpread 가 있는 무기(스나)는 조준 안 하면 크게, 조준하면 spread.
+-- 나머지는 조준하면 40% 로 줄어듦
+local function currentSpread(def): number
+	if def.hipSpread then
+		return zooming and def.spread or def.hipSpread
+	end
+	return def.spread * (zooming and 0.4 or 1)
+end
+
 local function currentDef()
 	local id = player:GetAttribute("GunnerWeapon")
 	return type(id) == "string" and WeaponConfig.Get(id) or WeaponConfig.Get(WeaponConfig.DefaultGunnerWeapon)
@@ -247,13 +256,11 @@ local function fire()
 	-- 2) 내 머리에서 그곳으로 (탄 퍼짐 적용)
 	local origin = head.Position
 	local dir = (aimPoint - origin).Unit
-	if def.spread > 0 then
+	local spreadDeg = currentSpread(def)
+	if spreadDeg > 0 then
 		local spin = math.random() * math.pi * 2
-		local off = math.rad(def.spread) * math.sqrt(math.random())
-		if zooming then
-			off *= 0.4 -- 조준하면 덜 퍼짐
-		end
-		dir = (CFrame.lookAt(origin, origin + dir) * CFrame.Angles(0, 0, spin) * CFrame.Angles(off, 0, 0)).LookVector
+		local off = math.rad(spreadDeg) * math.sqrt(math.random())
+		dir =(CFrame.lookAt(origin, origin + dir) * CFrame.Angles(0, 0, spin) * CFrame.Angles(off, 0, 0)).LookVector
 	end
 	local from = muzzlePos(char) or origin
 	if def.kind == "projectile" then
@@ -361,7 +368,7 @@ local function enter(char: Model, vehicle: Model?)
 		local fov = (zooming and def and def.zoomFov or DEFAULT_FOV) + fovKick
 		cam.FieldOfView += (fov - cam.FieldOfView) * math.min(dt * 14, 1)
 		-- 조준점 벌어짐 (쏠수록 벌어졌다 모임)
-		local gap = 10 + bloom * 26 + (def and def.spread or 0) * (zooming and 2 or 5)
+		local gap = 10 + bloom * 26 + (def and math.min(currentSpread(def), 8) * 5 or 0)
 		for i, arm in crossArms do
 			local o = CROSS_DIRS[i]
 			arm.Position = UDim2.new(0.5, o[1] * gap, 0.5, o[2] * gap)
