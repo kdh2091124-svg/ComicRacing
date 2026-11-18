@@ -210,6 +210,7 @@ GameplayConfig.Arena = {
 	checkInterval = 0.05, -- 장외 검사 간격 (초)
 	safeMargin = 40, -- 부활 위치는 가장자리/구멍에서 이만큼 안쪽인 곳만 기록
 	shootOnFoot = true, -- 차 없이 걸어서 장외로 가도 쏨
+	respawnGrace = 2, -- 새로 태어난 캐릭터/차는 이 초 동안 락온 안 걸림 (폭발 뒤 일어날 때도 2초)
 }
 
 -- 트라이얼 (혼자 기록 경쟁)

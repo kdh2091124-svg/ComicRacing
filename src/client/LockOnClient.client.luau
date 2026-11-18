@@ -180,9 +180,16 @@ RunService.RenderStepped:Connect(function()
 			visuals[target] = v
 			-- 레이저: 총구 → 대상 (살짝 깜빡)
 			local sniper = findSniper(name)
-			local muzzle = sniper and sniper:FindFirstChild("Muzzle")
-			if muzzle and muzzle:IsA("BasePart") then
-				local from, to = muzzle.Position, part.Position
+			-- 총구: 모델 안 어디든 "Muzzle" 파트 또는 Attachment
+			local muzzle = sniper and sniper:FindFirstChild("Muzzle", true)
+			local from: Vector3? = nil
+			if muzzle and muzzle:IsA("Attachment") then
+				from = muzzle.WorldPosition
+			elseif muzzle and muzzle:IsA("BasePart") then
+				from = muzzle.Position
+			end
+			if from then
+				local to = part.Position
 				local d = (to - from).Magnitude
 				v.beam.Size = Vector3.new(0.3, 0.3, d)
 				v.beam.CFrame = CFrame.lookAt((from + to) / 2, to)

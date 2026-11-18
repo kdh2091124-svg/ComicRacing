@@ -91,8 +91,14 @@ local function fire(sniper: Model?, target: Vector3)
 		return
 	end
 	aim(sniper, target)
-	local muzzle = sniper:FindFirstChild("Muzzle")
-	local from = muzzle and (muzzle :: BasePart).Position or sniper:GetPivot().Position
+	-- 총구: 모델 안 어디든 "Muzzle" 이라는 파트 또는 Attachment (총 모델 안에 있어도 됨)
+	local muzzle = sniper:FindFirstChild("Muzzle", true)
+	local from = sniper:GetPivot().Position
+	if muzzle and muzzle:IsA("Attachment") then
+		from = muzzle.WorldPosition
+	elseif muzzle and muzzle:IsA("BasePart") then
+		from = muzzle.Position
+	end
 	local dist = (target - from).Magnitude
 	fx("SniperTracer", Vector3.new(0.6, 0.6, dist), CFrame.lookAt((from + target) / 2, target), Color3.fromRGB(255, 240, 150), Arena.tracerTime)
 	fx("MuzzleFlash", Vector3.one * 5, CFrame.new(from), Color3.fromRGB(255, 200, 80), 0.08, Enum.PartType.Ball)
@@ -116,6 +122,11 @@ local function clearLock(target: Model)
 end
 
 local function startLock(target: Model, part: BasePart, kill: () -> ())
+	-- 막 태어났거나 막 일어난 대상은 락온 안 걸림
+	local grace = target:GetAttribute("SniperGraceUntil")
+	if type(grace) == "number" and os.clock() < grace then
+		return
+	end
 	local sniper = nearestSniper(part.Position)
 	locks[target] = { target = target, part = part, sniper = sniper, start = os.clock(), kill = kill }
 	target:SetAttribute("SniperLock", sniper and sniper.Name or "")
@@ -148,6 +159,25 @@ local function shouldFire(lock: Lock, now: number): boolean
 	end
 	return false
 end
+
+-- 새로 태어난 캐릭터 / 새로 나온 차는 잠깐 락온 안 걸림
+local function giveGrace(inst: Instance)
+	inst:SetAttribute("SniperGraceUntil", os.clock() + Arena.respawnGrace)
+end
+local function watchPlayer(p: Player)
+	p.CharacterAdded:Connect(giveGrace)
+	if p.Character then
+		giveGrace(p.Character)
+	end
+end
+Players.PlayerAdded:Connect(watchPlayer)
+for _, p in Players:GetPlayers() do
+	watchPlayer(p)
+end
+task.spawn(function()
+	local vehicles = workspace:WaitForChild("Vehicles")
+	vehicles.ChildAdded:Connect(giveGrace)
+end)
 
 local acc = 0
 RunService.Heartbeat:Connect(function(dt)

@@ -9,6 +9,7 @@ local RunService = game:GetService("RunService")
 
 local RagdollRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Ragdoll") :: RemoteEvent
 local Health = require(ReplicatedStorage.Shared.Config.GameplayConfig).Health
+local ArenaConfig = require(ReplicatedStorage.Shared.Config.GameplayConfig).Arena
 
 local Ragdoll = {}
 
@@ -178,6 +179,8 @@ function Ragdoll.Disable(player: Player)
 		return
 	end
 	char:SetAttribute("Ragdolled", nil)
+	-- 일어난 직후 잠깐은 아레나 저격 락온 안 걸림 (부활해서 차에 다시 타기 전 장외에 잠깐 서 있는 순간)
+	char:SetAttribute("SniperGraceUntil", os.clock() + ArenaConfig.respawnGrace)
 	if active[char] then
 		active[char]:Disconnect()
 		active[char] = nil

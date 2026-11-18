@@ -61,7 +61,11 @@ local A = {
 	curtainMargin = 130, -- 바깥 고리에서 막까지 거리
 	curtainAbove = 140, -- 바깥 고리보다 막이 얼마나 높은지
 	snipersPerSide = 2,
-	sniperScale = 3, -- 스나이퍼 크기 (멀리서도 보이게 크게)
+	sniperScale = 3, -- 스나이퍼 크기 (멀리서도 보이게 크게). 템플릿을 쓰면 템플릿 크기 × 이 값
+	-- 직접 자세 잡은 스나이퍼 템플릿 (Studio 에서 ServerStorage.ArenaModels.Sniper 에 두기, docs/MODEL_RULES.md)
+	-- 없으면 블록 스나이퍼로 대신 만듦
+	sniperTemplateFolder = "ArenaModels",
+	sniperTemplateName = "Sniper",
 	floorDrop = 8, -- 가장 낮은 고리보다 이만큼 아래로 떨어지면 장외 (구멍)
 	plowAngleDeg = 35, -- 날이 비스듬한 정도 (0 이면 그냥 미는 막대)
 	plowHeight = 6,
@@ -190,6 +194,47 @@ local function makeSniper(parent: Instance, feet: Vector3, lookAt: Vector3, k: n
 		end
 	end
 	m.PrimaryPart = torso
+	m.Parent = parent
+	return m
+end
+
+-- 개발자가 만든 스나이퍼 템플릿 복제: 크기 맞추고, 발바닥을 feet 높이에, 몸 앞이 lookAt 을 보게
+local function placeTemplate(template: Model, parent: Instance, feet: Vector3, lookAt: Vector3, scale: number, idx: number): Model
+	local m = template:Clone()
+	m.Name = "Sniper" .. idx
+	m:SetAttribute("Sniper", true)
+	if scale ~= 1 then
+		m:ScaleTo(m:GetScale() * scale)
+	end
+	for _, d in m:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.Anchored = true -- 잡은 자세 그대로 고정
+			d.CanCollide = false
+			d.CanQuery = false
+			d.CanTouch = false
+		elseif d:IsA("Humanoid") then
+			d.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None -- 이름/체력바 숨김
+			d.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+		elseif d:IsA("Script") or d:IsA("LocalScript") then
+			d:Destroy() -- Animate 같은 스크립트가 자세를 덮어쓰지 않게
+		end
+	end
+	if not m.PrimaryPart then
+		local root = m:FindFirstChild("HumanoidRootPart")
+		if root and root:IsA("BasePart") then
+			m.PrimaryPart = root
+		end
+	end
+	-- 방향 먼저 (템플릿의 앞 = 피벗 LookVector), 그다음 발바닥 높이 맞춤
+	local pivot = m:GetPivot()
+	m:PivotTo(CFrame.lookAt(pivot.Position, pivot.Position + (Vector3.new(lookAt.X, 0, lookAt.Z) - Vector3.new(feet.X, 0, feet.Z))))
+	local bbCF, bbSize = m:GetBoundingBox()
+	local bottom = bbCF.Position.Y - bbSize.Y / 2
+	local p = m:GetPivot()
+	m:PivotTo(p + Vector3.new(feet.X - p.Position.X, feet.Y - bottom, feet.Z - p.Position.Z))
+	if not m:FindFirstChild("Muzzle", true) then
+		warn("[ArenaBuilder] 스나이퍼 템플릿에 'Muzzle'(총구 Attachment 또는 파트)이 없어요 → 몸 중심에서 쏘는 걸로 보임")
+	end
 	m.Parent = parent
 	return m
 end
@@ -443,6 +488,12 @@ function ArenaBuilder.Build(options: { keepTerrain: boolean? }?)
 		{ Vector3.new(S, 0, 0), Vector3.new(0, 0, 1) },
 	}
 	local sniperIdx = 0
+	local templateFolder = game:GetService("ServerStorage"):FindFirstChild(A.sniperTemplateFolder)
+	local sniperTemplate = templateFolder and templateFolder:FindFirstChild(A.sniperTemplateName)
+	if sniperTemplate and not sniperTemplate:IsA("Model") then
+		sniperTemplate = nil
+	end
+	print(sniperTemplate and "[ArenaBuilder] 스나이퍼: 직접 만든 템플릿 사용" or "[ArenaBuilder] 스나이퍼: 템플릿 없음 → 블록 스나이퍼")
 	for _, side in sides do
 		local mid, along = A.center + side[1], side[2]
 		local look = CFrame.lookAt(mid, mid + along) -- Z 축 = 막 방향
@@ -457,7 +508,12 @@ function ArenaBuilder.Build(options: { keepTerrain: boolean? }?)
 			sniperIdx += 1
 			local t = (k / (A.snipersPerSide + 1)) * 2 - 1 -- -1 ~ 1 사이 고르게
 			local feet = mid + along * (t * S) + Vector3.new(0, topY + 4, 0)
-			makeSniper(fCurtain, feet, A.center + Vector3.new(0, outer.top, 0), A.sniperScale, sniperIdx)
+			local aimAt = A.center + Vector3.new(0, outer.top, 0)
+			if sniperTemplate then
+				placeTemplate(sniperTemplate, fCurtain, feet, aimAt, A.sniperScale, sniperIdx)
+			else
+				makeSniper(fCurtain, feet, aimAt, A.sniperScale, sniperIdx)
+			end
 		end
 	end
 
