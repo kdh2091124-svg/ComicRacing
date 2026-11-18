@@ -412,9 +412,15 @@ local function fire()
 	local cam = workspace.CurrentCamera
 	local params = rayParams(char, vehicle)
 	-- 1) 화면 가운데가 가리키는 곳
-	local look = cam.CFrame.LookVector
-	local aimHit = workspace:Raycast(cam.CFrame.Position, look * (def.range + 60), params)
-	local aimPoint = aimHit and aimHit.Position or cam.CFrame.Position + look * def.range
+	-- 조준경이 켜져 있으면 "실제로 보이는 십자선" 위치로 (휙 돌릴 때 렌즈와 함께 밀린 자리)
+	local camPos, look = cam.CFrame.Position, cam.CFrame.LookVector
+	if scope.Visible then
+		local vs = cam.ViewportSize
+		local ray = cam:ViewportPointToRay(vs.X / 2 + scopeShift.X, vs.Y / 2 + scopeShift.Y)
+		camPos, look = ray.Origin, ray.Direction.Unit
+	end
+	local aimHit = workspace:Raycast(camPos, look * (def.range + 60), params)
+	local aimPoint = aimHit and aimHit.Position or camPos + look * def.range
 	-- 2) 내 머리에서 그곳으로 (탄 퍼짐 적용)
 	local origin = head.Position
 	local dir = (aimPoint - origin).Unit
@@ -638,7 +644,13 @@ local function enter(char: Model, vehicle: Model?)
 			})
 		end
 		-- 조준점 벌어짐 (쏠수록 벌어졌다 모임)
-		local gap = 10 + bloom * 26 + (def and math.min(currentSpread(def), 8) * 5 or 0)
+		-- 조준점 간격 = 실제 탄 퍼짐 범위 그대로 (화면 픽셀로 환산) + 쏠 때 살짝 벌어지는 연출
+		local spreadPx = 0
+		if def then
+			local half = math.rad(cam.FieldOfView / 2)
+			spreadPx = math.tan(math.rad(currentSpread(def))) / math.tan(half) * cam.ViewportSize.Y / 2
+		end
+		local gap = 6 + math.min(spreadPx, 220) + bloom * 8
 		for i, arm in crossArms do
 			local o = CROSS_DIRS[i]
 			arm.Position = UDim2.new(0.5, o[1] * gap, 0.5, o[2] * gap)
