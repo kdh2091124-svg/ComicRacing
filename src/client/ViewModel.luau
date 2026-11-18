@@ -24,6 +24,9 @@ local VM = {
 	kickRoll = 0.08,
 	kickStiffness = 260,
 	kickDamping = 0.42, -- 0.4~0.6 = 살짝 튕기며 복귀 (쫄깃)
+	circleStiffness = 90, -- 조준 "@" 반동 원 스프링 (작을수록 원이 천천히 크게)
+	circleDamping = 0.3, -- 낮을수록 원을 더 많이 돎
+	adsKickBack = 0.25, -- 조준 중 한 발당 몸 쪽으로 더 들어오는 속도 (adsKickCircle 있는 무기)
 	-- 스웨이: 손목이 아니라 "어깨"를 중심으로 팔째 살짝 늦게 따라옴 + 도는 쪽으로 살짝 기울임
 	shoulderPivot = Vector3.new(0.75, -1.4, 0.7), -- 카메라 기준 오른쪽 어깨 (이 점을 중심으로 흔들림)
 	-- (빠르게 돌릴 때 끝에서 "탁 걸리고 휙 튕기던" 문제 → 양 줄이고, 끝 걸림/튕김 없이 부드럽게)
@@ -51,6 +54,7 @@ local VM = {
 	magDrop = 1.2, -- Mag: 장전 때 탄창이 빠지는 거리
 	throwGravity = 24, -- 던진 탄창/스피드로더가 떨어지는 중력 (작을수록 포물선이 길게 보임, 진짜 중력은 196)
 	throwLife = 1.4, -- 던진 것이 보이는 시간 (초)
+	reloadViewMargin = 0.8, -- 장전 중 총/쥔 손이 화면 끝에서 이만큼 안쪽에 있게 (1 = 화면 끝까지 허용)
 	armFollow = 0.5, -- 장전/볼트 때 총이 움직인 만큼 어깨도 따라감 (0 = 팔만 늘어남, 1 = 팔 전체가 같이 움직임)
 	coverOpen = 95, -- Cover(스나 볼트 창 덮개): 볼트 당길 때 열리는 각도
 	coverBounce = 12, -- Cover: 열리고 닫힐 때 덜컹 튕기는 각도
@@ -158,6 +162,8 @@ local triggerSet: Moving? = nil
 local cylAngle, cylTarget = 0, 0
 local cylAV = 0 -- 실린더 회전 속도 (스프링)
 local kickZ, kickP, kickR = newSpring(), newSpring(), newSpring()
+local circX, circY = newSpring(), newSpring() -- 조준 반동 "@" 랜덤 원 (화면 기준 좌우/위아래)
+local kickCircle = 0 -- 이 무기의 원 반동 크기 (WeaponConfig.adsKickCircle)
 local swayX, swayY = newSpring(), newSpring()
 local mouseVel = Vector2.zero
 local adsBlend = 0
@@ -443,6 +449,7 @@ function ViewModel.Set(weaponId: string)
 	hipCF = (def and def.vmHip) and CFrame.new(def.vmHip) or VM.hip
 	adsRollRad = math.rad(def and def.adsRoll or 0)
 	adsPos = def and def.vmAds or nil
+	kickCircle = def and def.adsKickCircle or 0
 	oneHandedAds = def ~= nil and def.oneHandedAds == true
 	modelScale = 1
 	if math.abs(len - want) > 0.05 then
@@ -653,6 +660,7 @@ function ViewModel.Set(weaponId: string)
 	current = m
 	raiseStart = os.clock()
 	kickZ, kickP, kickR = newSpring(), newSpring(), newSpring()
+	circX, circY = newSpring(), newSpring()
 	adsBlend = 0
 	adsS = newSpring()
 	inX, inY, inZ = newSpring(), newSpring(), newSpring()
@@ -672,6 +680,20 @@ function ViewModel.Kick(strength: number?)
 	kickZ.v += VM.kickBack * 60 * s
 	kickP.v += VM.kickUp * 60 * s
 	kickR.v += (math.random() * 2 - 1) * VM.kickRoll * 60 * s
+	-- 조준 중 "@" 반동: 매번 랜덤 방향으로 튀면서 빙글 원을 그리고 제자리 (조준 정도만큼)
+	local ads = math.clamp(adsBlend, 0, 1)
+	if kickCircle > 0 and ads > 0.05 then
+		local a = math.random() * math.pi * 2
+		local dir = Vector2.new(math.cos(a), math.sin(a))
+		local spin = math.random() < 0.5 and 1 or -1
+		local amt = kickCircle * s * ads
+		local w = math.sqrt(VM.circleStiffness)
+		circX.x += dir.X * amt
+		circY.x += dir.Y * amt
+		circX.v += -dir.Y * spin * amt * w -- 옆으로 밀어서 원을 그림
+		circY.v += dir.X * spin * amt * w
+		kickZ.v += VM.adsKickBack * 60 * s * ads -- 팔이 몸 쪽으로 더 들어왔다 복귀
+	end
 end
 
 -- 지금 총이 반동으로 튄 각도 (라디안): 총알/조준점이 이만큼 같이 따라감
@@ -764,7 +786,20 @@ local function placeArm(set: ArmSet, handPos: Vector3, shoulder: Vector3, camCF:
 	end
 end
 
--- 매 프레임: state = { ads, hidden, mouseDelta, bolt(0~1|nil), reload(0~1|nil), dt }
+-- 점 p 를 화면 안쪽으로 당김 (margin 1 = 화면 끝, 작을수록 더 안쪽). 너무 가까우면 앞으로 밀어냄
+local function inView(cam: Camera, p: Vector3, margin: number): Vector3
+	local camCF = cam.CFrame
+	local l = camCF:PointToObjectSpace(p)
+	local z = math.min(l.Z, -1.2)
+	local tv = math.tan(math.rad(cam.FieldOfView) / 2) * margin
+	local vp = cam.ViewportSize
+	local th = tv * (vp.X / math.max(vp.Y, 1))
+	local x = math.clamp(l.X, z * th, -z * th)
+	local y = math.clamp(l.Y, z * tv, -z * tv)
+	return camCF:PointToWorldSpace(Vector3.new(x, y, z))
+end
+
+-- 매 프레임: state ={ ads, hidden, mouseDelta, bolt(0~1|nil), reload(0~1|nil), dt }
 function ViewModel.Update(cam: Camera, state)
 	if not current or not current.Parent then
 		return
@@ -812,6 +847,8 @@ function ViewModel.Update(cam: Camera, state)
 	stepSpring(kickZ, VM.kickStiffness, VM.kickDamping, dt)
 	stepSpring(kickP, VM.kickStiffness, VM.kickDamping, dt)
 	stepSpring(kickR, VM.kickStiffness * 0.8, VM.kickDamping, dt)
+	stepSpring(circX, VM.circleStiffness, VM.circleDamping, dt)
+	stepSpring(circY, VM.circleStiffness, VM.circleDamping, dt)
 	local t = os.clock()
 	local breathe = math.sin(t * 1.7) * 0.01 * (1 - adsBlend * 0.8)
 	local raise = backOut(math.clamp((t - raiseStart) / VM.raiseTime, 0, 1)) -- 꺼낼 때 살짝 넘쳤다 자리
@@ -820,7 +857,11 @@ function ViewModel.Update(cam: Camera, state)
 	local adsCF
 	if adsPos then
 		-- 리볼버: 가늠자를 가운데 맞추지 않음. 오른쪽으로 팔을 쭉 뻗어서 먼 조준점 쪽을 겨누고, 손목에서 꺾음(45° 갱스터)
+		-- vmAds = 리볼버 가늠자("Aim")가 올 자리 → 화면에서 "+ ." 처럼 조준점 바로 오른쪽에 옴
 		adsCF = CFrame.lookAt(adsPos, Vector3.new(0, 0, -120)) * CFrame.Angles(0, 0, adsRollRad)
+		if aimLocal then
+			adsCF = adsCF + (adsPos - adsCF:PointToWorldSpace(aimLocal))
+		end
 	else
 		adsCF = aimLocal and CFrame.new(-aimLocal.X, -aimLocal.Y, -adsDist - aimLocal.Z) or VM.ads
 		-- 조준할 때 꺾기: 가늠쇠 점을 중심으로 돌려서 조준은 그대로
@@ -835,9 +876,15 @@ function ViewModel.Update(cam: Camera, state)
 	local pivot = CFrame.new(VM.shoulderPivot:Lerp(Vector3.new(0, -0.6, 0.4), adsBlend))
 	local swayCF = pivot * CFrame.Angles(sy, sx, sx * VM.swayRoll) * pivot:Inverse()
 	local inertiaCF = CFrame.new(inX.x, inY.x, inZ.x) * CFrame.Angles(inY.x * 0.25, 0, -inX.x * 0.6)
-	local cf = cam.CFrame * inertiaCF * swayCF * base
+	-- "@" 원 반동: 화면 기준으로 팔째 이동 (총 방향은 그대로)
+	local circleCF = CFrame.new(math.clamp(circX.x, -0.4, 0.4), math.clamp(circY.x, -0.4, 0.4), 0)
+	-- 꺾어 쥔 리볼버도 총구가 화면 위쪽으로 튀게: 반동은 꺾기를 푼 방향 기준으로 줌
+	local rollNow = adsPos and adsRollRad * math.clamp(adsBlend, 0, 1) or 0
+	local cf = cam.CFrame * inertiaCF * swayCF * circleCF * base
 		* CFrame.new(0, -0.9 * (1 - raise) + breathe, 0) * CFrame.Angles(math.rad(-35) * (1 - raise), math.rad(8) * (1 - raise), 0)
+		* CFrame.Angles(0, 0, -rollNow)
 		* CFrame.new(0, 0, math.clamp(kickZ.x, -0.2, 0.6)) * CFrame.Angles(math.clamp(kickP.x, -0.2, 0.5), 0, kickR.x)
+		* CFrame.Angles(0, 0, rollNow)
 
 	local restPos = cf.Position -- 장전/볼트 동작 전 위치 (어깨가 따라가는 기준)
 	-- 장전: 기울이기 → 탄창 빼기 → 꽂기 → 탁 → 복귀
@@ -1059,6 +1106,11 @@ function ViewModel.Update(cam: Camera, state)
 	pull = math.max(pull, rPull)
 	lift = math.max(lift, rLift)
 
+	-- 장전 중엔 총(오른손)이 화면 밖으로 나가지 않게 안쪽으로 당김
+	if state.reload then
+		local fixed = inView(cam, cf.Position, VM.reloadViewMargin)
+		cf = cf + (fixed - cf.Position)
+	end
 	local gun = current:FindFirstChild("Gun")
 	if gun and gun:IsA("Model") then
 		gun:PivotTo(cf * gripOffset)
@@ -1235,6 +1287,15 @@ function ViewModel.Update(cam: Camera, state)
 	if leftTarget then
 		lHand = cf:PointToWorldSpace(leftTarget) -- 새 탄창 / 스피드로더를 쥔 왼손
 	end
+	-- 장전 중 무언가를 쥔 손은 화면 안에 보이게
+	if state.reload then
+		if leftTarget then
+			lHand = inView(cam, lHand, VM.reloadViewMargin)
+		end
+		if rightTarget then
+			rHand = inView(cam, rHand, VM.reloadViewMargin)
+		end
+	end
 	local camCF = cam.CFrame
 	-- 왼손이 총에서 떨어져 화면 아래로 빠진 자리 (한손 동작 / 리볼버 한손 조준)
 	local leftAway = camCF:PointToWorldSpace(Vector3.new(-0.9, -2.8, -1.2))
@@ -1258,7 +1319,7 @@ function ViewModel.Update(cam: Camera, state)
 	local follow = (cf.Position - restPos) * VM.armFollow
 	-- 한손 조준(리볼버): 오른팔은 더 쭉 뻗음. vmAds 무기는 어깨도 오른쪽 위로 (오른쪽으로 팔 뻗기)
 	local rShoulder = oneHandedAds and Vector3.new(0.6, -1.9, 0.5) or Vector3.new(1.2, -2.2, 0.6)
-	local rShoulderAds = adsPos and Vector3.new(1.0, -1.5, 0.6) or Vector3.new(0.5, -1.8, 0.6)
+	local rShoulderAds = adsPos and Vector3.new(1.5, -1.6, 0.5) or Vector3.new(0.5, -1.8, 0.6)
 	placeArm(rightArm, rHand, camCF:PointToWorldSpace(rShoulder:Lerp(rShoulderAds, adsBlend)) + follow, camCF, cf.RightVector) -- 팔이 총과 같이 비틀림
 	if showLeft then
 		placeArm(leftArm, lHand, camCF:PointToWorldSpace(Vector3.new(-1.1, -2.2, -0.2):Lerp(Vector3.new(-0.8, -2, -0.3), adsBlend)) + follow, camCF, cf.RightVector)

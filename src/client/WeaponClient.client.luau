@@ -561,9 +561,9 @@ local function enter(char: Model, vehicle: Model?)
 		end
 		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
 		UserInputService.MouseIconEnabled = false -- 마우스 커서 숨김, 조준점만
-		-- 조준 상태: 우클릭 누름 + 볼트 당기는 중 아님
+		-- 조준 상태: 우클릭 누름 + 볼트 당기는 중 아님 + 장전 중 아님 (장전하면 줌 풀림, 끝나고 우클릭 누르고 있으면 다시 조준)
 		local nowT = os.clock()
-		local wantZoom = rmbDown and nowT >= boltUntil
+		local wantZoom = rmbDown and nowT >= boltUntil and player:GetAttribute("Reloading") ~= true
 		if wantZoom and not zooming then
 			zoomStart = nowT
 		end
