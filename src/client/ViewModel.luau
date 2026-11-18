@@ -1006,35 +1006,41 @@ function ViewModel.Update(cam: Camera, state)
 		end
 	elseif state.reload and style == "revolver" then
 		-- 1) "/" 반대 방향(총 위쪽이 왼쪽)으로 탁 쳐서 실린더 열고 휙 돌림 (0~0.08)
-		local snapOpen = smooth(0, 0.025, r) * (1 - smooth(0.05, 0.12, r)) -- 한 번에 탁 (짧고 절도 있게)
+		local snapOpen = smooth(0, 0.05, r) * (1 - smooth(0.07, 0.2, r)) -- 부드럽게 탁 (걸리지 않게 들기와 겹침)
 		-- 장전은 한손: 왼손은 총에서 떼고(아래로), 스피드로더 들 때만 들어옴
 		leftAwayAmt = smooth(0, 0.04, r) * (1 - smooth(0.9, 1, r))
 		-- 팔꿈치 축으로 팔째 탁 (총만 꺾이지 않게)
 		local elbow = elbowPt
 		cf *= aboutPoint(elbow, CFrame.Angles(math.rad(-6) * snapOpen, 0, math.rad(42) * snapOpen))
-		cylOpen = backOut(math.clamp((r - 0.015) / 0.035, 0, 1)) * (1 - smooth(0.67, 0.7, r))
-		if crossed(0.04) then
-			jolt(0.02, -0.06, 0.18)
+		cylOpen = backOut(math.clamp((r - 0.02) / 0.05, 0, 1)) * (1 - smooth(0.66, 0.7, r))
+		if crossed(0.05) then
+			jolt(0.01, -0.03, 0.08) -- 탁 (총 꺾기와 겹쳐서 덜컥 걸리지 않게 약하게)
 			cylSpinV = 18 -- 열리면서 촤라락 돎
 		end
-		-- 2) 천천히 들어 올림 (0.14~0.34) → 탄피가 촤르르 하나씩 빠짐 (WeaponClient), 올린 채 유지
-		local up = smooth(0.14, 0.34, r) * (1 - smooth(0.6, 0.68, r))
-		cf *= aboutPoint(elbow, CFrame.Angles(math.rad(70) * up, math.rad(-12) * up, math.rad(-10) * up)) -- 팔꿈치 굽혀서 들기
+		-- 스피드로더 넣기 전에 실린더 헛돌기 멈추고 약실 칸에 딱 맞춤
+		if r >= 0.3 and r < 0.62 then
+			cylSpinV = 0
+		end
+		-- 2) 천천히 들어 올림 (0.12~0.34) → 탄피가 촤르르 하나씩 빠짐 (WeaponClient), 올린 채 유지
+		--    몸 쪽으로 당겨오지 않게: 조금만 세우고 앞·위로 내밂
+		local up = smooth(0.12, 0.34, r) * (1 - smooth(0.6, 0.7, r))
+		cf *= CFrame.new(0, 0.2 * up * S0, -0.35 * up * S0)
+			* aboutPoint(elbow, CFrame.Angles(math.rad(38) * up, math.rad(-12) * up, math.rad(-10) * up))
 		-- 3) 올린 채로 실린더 크기에 맞는 스피드로더를 콕 (0.38~0.53) → 왼쪽으로 빼서 버리기 (0.56~0.62)
 		if r >= 0.38 and r < 0.62 and cylSet then
-			local come = smooth(0.38, 0.5, r)
-			local push = smooth(0.5, 0.53, r)
+			local come = smooth(0.38, 0.49, r) -- 실린더 뒤 축선에 정렬
+			local push = smooth(0.49, 0.535, r) -- 축을 따라 똑바로 쏙
 			local leave = smooth(0.55, 0.61, r)
 			local swing = hingeLocal and (hingeLocal * CFrame.Angles(0, 0, math.rad(VM.cylinderSwing) * cylOpen) * hingeLocal:Inverse())
 				or aboutPoint(cylSet.pivot + Vector3.new(0, -0.12 * S0, 0), CFrame.Angles(0, 0, math.rad(VM.cylinderSwing) * cylOpen))
 			local depth = cylRearZ + loaderLength / 2 -- 링이 실린더 뒷면에 딱 붙는 위치
 			local rear = swing * CFrame.new(cylSet.pivot + Vector3.new(0, 0, depth + 0.35 * S0 * (1 - push)))
-			loaderPose = rear * CFrame.new(-0.5 * S0 * (1 - come) - 0.9 * S0 * leave, -0.2 * S0 * (1 - come), 1.0 * S0 * (1 - come) + 0.3 * S0 * leave)
+			loaderPose = rear * CFrame.new(-0.5 * S0 * (1 - come) - 0.9 * S0 * leave, -0.2 * S0 * (1 - come), 0.6 * S0 * (1 - come) + 0.3 * S0 * leave)
 			leftTarget = loaderPose.Position + Vector3.new(0, -0.06, 0.15 * S0)
 			showLeft = true
 		end
 		if crossed(0.53) then
-			jolt(0.12, -0.04, 0) -- 콕
+			jolt(0.06, -0.02, 0) -- 콕
 			refillCyl = true -- 탄이 스피드로더에서 실린더로
 		end
 		if crossed(0.61) and speedLoader then
@@ -1044,10 +1050,10 @@ function ViewModel.Update(cam: Camera, state)
 			end
 		end
 		-- 4) 내리면서 "/" 방향(총 위쪽이 오른쪽)으로 탁 쳐서 실린더 닫기 (0.68) → 살짝 돎 → 제자리
-		local snapClose = smooth(0.64, 0.69, r) * (1 - smooth(0.72, 0.85, r))
+		local snapClose = smooth(0.62, 0.69, r) * (1 - smooth(0.71, 0.88, r)) -- 부드럽게 탁
 		cf *= aboutPoint(elbow, CFrame.Angles(0, math.rad(-6) * snapClose, math.rad(-48) * snapClose))
 		if crossed(0.68) then
-			jolt(0.1, 0.05, -0.24)
+			jolt(0.05, 0.03, -0.1)
 			cylSpinV = 9
 		end
 	elseif state.reload and style == "cola" then
@@ -1247,7 +1253,8 @@ function ViewModel.Update(cam: Camera, state)
 	-- 리볼버 스피드로더: 장전 중에만 보임
 	if speedLoader then
 		if loaderPose then
-			speedLoader:PivotTo(cf * loaderPose)
+			-- 실린더가 돈 각도만큼 같이 돌려서 탄 6발이 약실 구멍에 딱 맞게
+			speedLoader:PivotTo(cf * loaderPose * CFrame.Angles(0, 0, cylAngle))
 		end
 		for _, d in speedLoader:GetDescendants() do
 			if d:IsA("BasePart") then
