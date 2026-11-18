@@ -1022,7 +1022,7 @@ function ViewModel.Update(cam: Camera, state)
 		--    복귀가 다 끝난 뒤에야 장전 자세로 (기울였다 돌아오는 게 가려지지 않게)
 		local snapL = pop(0, 0.055) * (1 - smooth(0.06, 0.16, r))
 		-- 2) 총구를 위로 세워서 (0.1~0.18) 실린더 안 탄피가 하나씩 빠지는 걸 보여 줌 (0.18~0.29) → 내림 (0.29~0.37)
-		local raise = smooth(0.1, 0.18, r) * (1 - smooth(0.29, 0.37, r))
+		local muzzleUp = smooth(0.1, 0.18, r) * (1 - smooth(0.29, 0.37, r))
 		-- 3) 장전 자세: 오른쪽으로 살짝 + 총구 아래로 아주 살짝 (0.29~0.38), 열린 채로 장전 (스르륵 부드럽게)
 		local tilt = smooth(0.29, 0.38, r) * (1 - smooth(0.52, 0.6, r))
 		cylOpen = backOut(math.clamp((r - 0.03) / 0.03, 0, 1)) * (1 - smooth(0.615, 0.635, r))
@@ -1041,9 +1041,9 @@ function ViewModel.Update(cam: Camera, state)
 		local flick = pop(0.61, 0.64) * (1 - smooth(0.66, 0.82, r))
 		-- 각도 (총 기준): Z+ = 총 위쪽이 왼쪽, Z- = 오른쪽 / X- = 총구 아래
 		-- (세울 때 몸 쪽으로 당겨오지 않게 손을 살짝 앞·위로)
-		cf *= CFrame.new(0.03 * tilt * S0, (-0.08 * tilt + 0.12 * raise) * S0, -0.2 * raise * S0)
+		cf *= CFrame.new(0.03 * tilt * S0, (-0.08 * tilt + 0.12 * muzzleUp) * S0, -0.2 * muzzleUp * S0)
 			* aboutPoint(elbow, CFrame.Angles(
-				math.rad(-5) * tilt + math.rad(40) * raise, -- 탄피 뺄 땐 총구 위로, 장전 땐 아주 살짝 아래
+				math.rad(-5) * tilt + math.rad(40) * muzzleUp, -- 탄피 뺄 땐 총구 위로, 장전 땐 아주 살짝 아래
 				0,
 				math.rad(40) * snapL - math.rad(18) * tilt + math.rad(12) * windL - math.rad(28) * flick -- 왼쪽 탁 / 오른쪽 살짝 / 왼쪽 준비 / 오른쪽 탁
 			))
