@@ -17,7 +17,8 @@ Studio 명령줄 (기존 Workspace.Map 은 ServerStorage 로 백업됨):
 require(game.ServerStorage.Tools.RoadBuilder:Clone()).Build()
 ```
 - 길 모양은 `src/tools/RoadBuilder.luau` 의 `ROUTES` 점만 고치면 됨 (다시 Build 하면 반영)
-- 바깥 월드 크기: `WORLD` (도시는 그대로). 고갯길 모양: `TOUGE_PATH` (구간마다 { 산 쪽 거리, 좌우, 높이 })
+- 바깥 월드 크기: `WORLD` (도시는 그대로). 고갯길 모양: `TOUGE_PROGRAM` ({"s", 길이, 경사} 직선 / {"t", 각도, 반지름, 경사} 회전 / {"mark", 이름} 지름길 위치)
+- 가드레일: 보이는 난간은 충돌 없음, 뒤에 투명 벽(높이 `railWallHeight`)이 막음
 - Build 할 때 지형(Terrain)을 새로 만듦 (지형 직접 손본 게 있으면 `Build({ keepTerrain = true })`)
 - 끝나면 Output 에 "길 점검" (길마다 최대 경사, 자동 다리, 입구 수)
 - 직접 손볼 땐 Workspace.Map.Roads 안의 조각을 움직이면 됨

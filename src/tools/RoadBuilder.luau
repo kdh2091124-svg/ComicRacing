@@ -31,6 +31,8 @@ local STYLE = {
 	rail = Color3.fromRGB(190, 195, 210),
 	ground = Color3.fromRGB(95, 200, 105),
 	deck = Color3.fromRGB(150, 155, 170),
+	dirt = Color3.fromRGB(165, 125, 80), -- 비포장 지름길
+	railWallHeight = 7, -- 가드레일 뒤 투명 벽 높이 (이보다 높이 날아야 밖으로 나감)
 	junctionFlatRadius = 100, -- 갈림길 주변 이 거리 안은 큰 길 기울기 0 으로
 	sameLevel = 4, -- 높이 차이가 이 안이면 "같은 높이로 닿음" → 입구
 	underClear = 4, -- 다른 길이 이보다 낮으면 "아래 지나감" → 이 구간은 다리
@@ -57,40 +59,62 @@ local function near(x: number, z: number)
 	return { x * WORLD, z * WORLD }
 end
 
--- 고갯길 (북서쪽 산): 구간마다 성격이 다름 (완만 스위퍼 / 급한 헤어핀 / 가파른 직선 / S 시케인 / 쉬는 구간 / 연속 헤어핀)
+-- 고갯길 (북서쪽 산)
+-- "거북이 그리기" 방식: 직선 몇 스터드, 반지름 몇으로 몇 도 회전 → 진짜 원호라서 헤어핀이 각지지 않고 U 자로 부드러움
 local TOUGE = {
-	base = Vector3.new(-2300 * WORLD, 55, -2400 * WORLD), -- 산 입구
+	base = Vector3.new(-1700 * WORLD, 50, -1850 * WORLD), -- 고속도로에서 갈라지는 곳 (여기서 산 쪽으로 출발)
 	dir = Vector3.new(-1, 0, -1).Unit, -- 산꼭대기 방향
-	heightScale = 1.15, -- 아래 높이 값에 곱함 (꼭대기 약 700)
+	startLateral = 0,
+	pointSpacing = 6, -- 경로 점 간격
 }
 
--- 고갯길 경로 (산 기준 좌표): { 산 쪽으로 들어간 거리, 좌우, 높이 }
--- 위아래로 겹치는 구간끼리는 "산 쪽 거리"가 70 이상 떨어지게 설계 (길끼리 안 겹침)
-local TOUGE_PATH = {
-	-- 1) 완만한 스위퍼로 시작
-	{ 0, -200, 0 }, { 20, -60, 15 }, { 10, 90, 32 }, { 0, 220, 48 },
-	-- 2) 급한 헤어핀 (오른쪽)
-	{ 55, 290, 60 }, { 110, 220, 72 },
-	-- 3) 가파른 직선 (쫘아악)
-	{ 115, 60, 108 }, { 115, -120, 150 },
-	-- 4) 크게 도는 완만한 U 턴
-	{ 150, -250, 168 }, { 230, -290, 186 }, { 300, -230, 200 },
+-- 명령: { "s", 길이, 경사 }            직선 (경사 0.25 ≈ 14°)
+--       { "t", 각도, 반지름, 경사 }     회전 (+ 는 산 쪽으로 돌며 왼쪽, - 는 오른쪽. 헤어핀 = ±180)
+--       { "mark", "이름" }              지름길 붙일 위치 표시
+-- 헤어핀은 +180 / -180 을 번갈아 써야 계속 산 쪽으로 올라감
+local TOUGE_PROGRAM = {
+	-- 0) 고속도로에서 산으로 들어가는 진입로 → 오른쪽으로 돌며 첫 구간
+	{ "s", 220, 0.03 },
+	{ "t", -90, 140, 0.05 },
+	-- 1) 완만한 S 스위퍼
+	{ "s", 120, 0.08 },
+	{ "t", 30, 300, 0.10 },
+	{ "s", 80, 0.08 },
+	{ "t", -30, 300, 0.10 },
+	{ "s", 60, 0.08 },
+	-- 2) 급한 U 헤어핀 (안쪽에 지름길 1)
+	{ "mark", "cut1a" },
+	{ "t", 180, 55, 0.12 },
+	{ "mark", "cut1b" },
+	-- 3) 가파른 직선 쫘아악
+	{ "s", 300, 0.25 },
+	-- 4) 넓게 도는 U 턴 (완만)
+	{ "t", -180, 90, 0.08 },
 	-- 5) 빠른 S 시케인
-	{ 310, -120, 214 }, { 345, -40, 226 }, { 300, 40, 238 }, { 335, 120, 250 }, { 310, 200, 262 },
-	-- 6) 급한 헤어핀 (오른쪽)
-	{ 360, 265, 276 }, { 410, 205, 290 },
+	{ "s", 40, 0.10 },
+	{ "t", 35, 60, 0.12 },
+	{ "t", -70, 60, 0.12 },
+	{ "t", 35, 60, 0.12 },
+	{ "s", 60, 0.10 },
+	-- 6) 급한 U 헤어핀
+	{ "t", 180, 50, 0.12 },
 	-- 7) 쉬는 구간 (거의 평평)
-	{ 420, 60, 296 }, { 410, -80, 302 },
-	-- 8) 급한 헤어핀 (왼쪽)
-	{ 455, -150, 314 }, { 505, -90, 328 },
-	-- 9) 가파른 직선 내리막
-	{ 510, 80, 374 }, { 505, 200, 404 },
-	-- 10) 연속 헤어핀 (오른쪽 → 왼쪽)
-	{ 550, 265, 420 }, { 600, 205, 436 }, { 605, 100, 456 }, { 650, 40, 468 }, { 700, 100, 482 },
-	-- 11) 긴 S 스위퍼로 꼭대기
-	{ 705, 200, 496 }, { 760, 250, 512 }, { 820, 170, 534 }, { 860, 40, 552 },
-	-- 12) 꼭대기
-	{ 900, -40, 560 },
+	{ "s", 220, 0.03 },
+	-- 8) U 헤어핀 (안쪽에 지름길 2)
+	{ "mark", "cut2a" },
+	{ "t", -180, 55, 0.12 },
+	{ "mark", "cut2b" },
+	-- 9) 가파른 직선 쫘아악
+	{ "s", 300, 0.25 },
+	-- 10) 연속 U 헤어핀
+	{ "t", 180, 50, 0.12 },
+	{ "s", 90, 0.12 },
+	{ "t", -180, 50, 0.12 },
+	-- 11) 긴 스위퍼로 꼭대기
+	{ "s", 120, 0.10 },
+	{ "t", 40, 200, 0.10 },
+	{ "t", -40, 200, 0.10 },
+	{ "s", 80, 0.05 },
 }
 
 local function ringPoints(center: Vector3, radius: number, count: number, bank: number)
@@ -102,17 +126,55 @@ local function ringPoints(center: Vector3, radius: number, count: number, bank: 
 	return pts
 end
 
-local function tougePoints()
+
+-- 고갯길 경로 만들기 → 월드 좌표 점 목록 + 지름길 위치(marks)
+local function tougePath(): ({ any }, { [string]: Vector3 })
 	local T = TOUGE
 	local u = T.dir
 	local v = Vector3.new(-u.Z, 0, u.X)
+	local a, l, y = 0, T.startLateral, T.base.Y
+	local heading = math.rad(90) -- 0 = 오른쪽(+좌우), 90° = 산 쪽. 고속도로에서 산 쪽을 보고 출발
 	local pts = {}
-	for _, q in TOUGE_PATH do
-		local p = T.base + u * q[1] + v * q[2]
-		table.insert(pts, { p.X, T.base.Y + q[3] * T.heightScale, p.Z })
+	local marks: { [string]: Vector3 } = {}
+	local function world(): Vector3
+		local p = T.base + u * a + v * l
+		return Vector3.new(p.X, y, p.Z)
 	end
-	return pts
+	local function emit()
+		local p = world()
+		table.insert(pts, { p.X, p.Y, p.Z })
+	end
+	for _, cmd in TOUGE_PROGRAM do
+		if cmd[1] == "mark" then
+			marks[cmd[2]] = world()
+		elseif cmd[1] == "s" then
+			local len, grade = cmd[2], cmd[3]
+			local n = math.max(math.ceil(len / T.pointSpacing), 1)
+			for _ = 1, n do
+				local ds = len / n
+				a += math.sin(heading) * ds
+				l += math.cos(heading) * ds
+				y += grade * ds
+				emit()
+			end
+		elseif cmd[1] == "t" then
+			local ang, r, grade = math.rad(cmd[2]), cmd[3], cmd[4]
+			local arc = math.abs(ang) * r
+			local n = math.max(math.ceil(arc / T.pointSpacing), 1)
+			for _ = 1, n do
+				local ds = arc / n
+				heading += ang / n
+				a += math.sin(heading) * ds
+				l += math.cos(heading) * ds
+				y += grade * ds
+				emit()
+			end
+		end
+	end
+	return pts, marks
 end
+
+local TOUGE_POINTS, TOUGE_MARKS = tougePath()
 
 -- 길 목록 (위에서부터 순서대로. 나중 길이 앞의 길에 join 으로 붙을 수 있음)
 --   점: { x, 높이, z, bank = 기울기(도, + 면 오른쪽이 낮음), bridge = true }   (바깥 월드는 W(...) 로 써서 WORLD 배율 적용)
@@ -235,13 +297,33 @@ local ROUTES = {
 		points = (function()
 			local pts = {
 				{ join = "Highway", near = near(-1700, -1850) },
-				W(-2000, 52, -2150),
 			}
-			for _, p in tougePoints() do
+			for _, p in TOUGE_POINTS do
 				table.insert(pts, p)
 			end
 			return pts
 		end)(),
+	},
+	-- 지름길: 헤어핀 안쪽을 가로지르는 비포장 샛길 (빠르지만 좁음)
+	{
+		name = "Shortcut1",
+		width = 22,
+		step = 4,
+		style = "dirt",
+		points = {
+			{ join = "Touge", near = { TOUGE_MARKS.cut1a.X, TOUGE_MARKS.cut1a.Z } },
+			{ join = "Touge", near = { TOUGE_MARKS.cut1b.X, TOUGE_MARKS.cut1b.Z } },
+		},
+	},
+	{
+		name = "Shortcut2",
+		width = 22,
+		step = 4,
+		style = "dirt",
+		points = {
+			{ join = "Touge", near = { TOUGE_MARKS.cut2a.X, TOUGE_MARKS.cut2a.Z } },
+			{ join = "Touge", near = { TOUGE_MARKS.cut2b.X, TOUGE_MARKS.cut2b.Z } },
+		},
 	},
 }
 
@@ -507,12 +589,13 @@ local function buildRoute(parent: Instance, plan: Plan, fills: { Fill }, carves:
 		local opening = A.opening or B.opening
 		local isBridge = A.bridge or B.bridge or A.under or B.under
 
-		-- 아스팔트는 두껍게(2) → 위아래로 꺾이는 곳에서도 틈이 안 보임
-		newPart(folder, "Road", Vector3.new(W, 2, L), cf(0, -1), STYLE.asphalt)
+		local dirt = route.style == "dirt"
+		-- 아스팔트는 두껍게(2) → 위아래로 꺾이는 곳에서도 틈이 안 보임 (비포장 지름길은 흙색)
+		newPart(folder, "Road", Vector3.new(W, 2, L), cf(0, -1), dirt and STYLE.dirt or STYLE.asphalt, dirt and Enum.Material.Ground or nil)
 		-- 도로 위 30 높이까지 지형 깎을 자리 (풀이 도로로 삐져나오지 않게)
 		table.insert(carves, { cf = CFrame.fromMatrix(mid + up * 15.2, right, up, -fwd), size = Vector3.new(W + S * 2 + 4, 30, L + 1) })
 		newPart(folder, "Shoulder", Vector3.new(W + S * 2, 2, L), cf(0, -1.05), STYLE.grass)
-		if not inTrim then
+		if not inTrim and not dirt then
 			if not opening then
 				for _, side in { -1, 1 } do
 					newPart(folder, "EdgeLine", Vector3.new(0.6, 0.08, L), cf(side * (W / 2 - 1.2), 0.04), STYLE.whiteLine)
@@ -539,10 +622,18 @@ local function buildRoute(parent: Instance, plan: Plan, fills: { Fill }, carves:
 		if route.rails ~= false and needRail and not inTrim and not opening then
 			for _, side in { -1, 1 } do
 				local x = side * (W / 2 + S - 1)
-				newPart(folder, "Rail", Vector3.new(0.4, 0.9, L), cf(x, 2.4), STYLE.rail, Enum.Material.Metal)
+				-- 보이는 난간: 충돌 없음 (얇고 낮아서 차가 타고 넘거나 걸려서 튕겨 날아가던 원인)
+				local rail = newPart(folder, "Rail", Vector3.new(0.4, 0.9, L), cf(x, 2.4), STYLE.rail, Enum.Material.Metal)
+				rail.CanCollide = false
 				if i % 3 == 0 then
-					newPart(folder, "RailPost", Vector3.new(0.5, 2.4, 0.5), cf(x, 1.2), STYLE.rail, Enum.Material.Metal)
+					local post = newPart(folder, "RailPost", Vector3.new(0.5, 2.4, 0.5), cf(x, 1.2), STYLE.rail, Enum.Material.Metal)
+					post.CanCollide = false
 				end
+				-- 실제로 막는 건 투명하고 매끈한 벽 (높이 RAIL_WALL). 웬만한 충돌은 벽 따라 긁고, 크게 날아올라야 넘어감
+				local wall = newPart(folder, "RailWall", Vector3.new(1, STYLE.railWallHeight, L), cf(x + side * 0.5, STYLE.railWallHeight / 2), STYLE.rail)
+				wall.Transparency = 1
+				wall.CastShadow = false
+				wall.CustomPhysicalProperties = PhysicalProperties.new(0.7, 0, 0, 100, 100) -- 마찰 0, 튕김 0
 			end
 		end
 	end
@@ -671,17 +762,20 @@ end
 ----------------------------------------------------------------------
 -- 지형: 고갯길 산 + 길 아래 채우기
 ----------------------------------------------------------------------
-local function buildTerrain(fills: { Fill }, carves: { Fill })
+local function buildTerrain(fills: { Fill }, carves: { Fill }, tougeSamples: { Sample })
 	local terrain = workspace.Terrain
-	-- 고갯길 산: 꼭대기에서 멀어질수록 낮아지는 원뿔 (길보다 항상 낮게: 꼭대기보다 60 아래에서 시작)
-	local T = TOUGE
-	local top = TOUGE_PATH[#TOUGE_PATH]
-	local runLen = top[1]
-	local summitY = T.base.Y + top[3] * T.heightScale
-	local v = Vector3.new(-T.dir.Z, 0, T.dir.X)
-	local summit = T.base + T.dir * top[1] + v * top[2]
-	local slope = (summitY - T.base.Y) / runLen
-	local peakH = summitY - 60
+	-- 고갯길 산: 꼭대기에서 멀어질수록 낮아지는 원뿔.
+	-- 실제 고갯길 모든 점을 검사해서, 어디서든 길보다 15 이상 낮도록 기울기를 자동으로 정함 (산이 길을 덮지 않음)
+	local summitSample = tougeSamples[#tougeSamples].pos
+	local summit = Vector3.new(summitSample.X, 0, summitSample.Z)
+	local peakH = summitSample.Y - 40
+	local slope = 0.3
+	for _, s in tougeSamples do
+		local d = (Vector2.new(s.pos.X, s.pos.Z) - Vector2.new(summit.X, summit.Z)).Magnitude
+		if d > 1 then
+			slope = math.max(slope, (peakH - (s.pos.Y - 15)) / d)
+		end
+	end
 	local maxR = peakH / slope
 	local steps = 50
 	for k = 0, steps - 1 do
@@ -772,7 +866,13 @@ function RoadBuilder.Build(options: { keepTerrain: boolean? }?)
 	spawn.Parent = map
 
 	map.Parent = workspace
-	buildTerrain(fills, carves)
+	local tougeSamples = {}
+	for _, plan in plans do
+		if plan.route.name == "Touge" then
+			tougeSamples = plan.samples
+		end
+	end
+	buildTerrain(fills, carves, tougeSamples)
 
 	if recording then
 		ChangeHistoryService:FinishRecording(recording, Enum.FinishRecordingOperation.Commit)
