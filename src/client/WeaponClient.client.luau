@@ -655,14 +655,16 @@ local function enter(char: Model, vehicle: Model?)
 				reloadStart = nowT
 				-- 리볼버: 실린더가 열리면 빈 탄피 6개가 쏟아짐
 				if ViewModel.CylinderPosition() then
-					task.delay(def.reloadTime * 0.2, function() -- 쓱 올려서 쏟는 순간
-						local p = ViewModel.CylinderPosition()
-						if p then
-							for _ = 1, 6 do
-								GunFX.Shell(p, Vector3.new(math.random() - 0.5, -1, math.random() - 0.5) * 0.4, -Vector3.yAxis * 0.3, { shell = "rifle" })
+					-- 천천히 들어 올리는 동안 탄피가 촤르르 하나씩 미끄러져 떨어짐
+					for i = 0, 5 do
+						task.delay(def.reloadTime * (0.24 + i * 0.022), function()
+							local p = ViewModel.CylinderPosition()
+							if p then
+								local jitter = Vector3.new(math.random() - 0.5, 0, math.random() - 0.5) * 0.15
+								GunFX.Shell(p + jitter, Vector3.new(math.random() - 0.5, -1, math.random() - 0.5) * 0.25, -Vector3.yAxis * 0.2, { shell = "rifle" })
 							end
-						end
-					end)
+						end)
+					end
 				end
 			elseif not reloading then
 				reloadStart = nil
