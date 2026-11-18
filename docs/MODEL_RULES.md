@@ -7,6 +7,8 @@
 | `Muzzle` | 총구 끝의 Attachment (또는 작은 파트) | 총알/섬광이 여기서 나감. 이쪽이 총의 "앞" |
 | `Mag` | 파트, 또는 그 이름의 Model/Folder | 탄창. 1인칭 장전 때 실제로 빠졌다 꽂힘 |
 | `Bolt` | 파트, 또는 그 이름의 Model/Folder | 볼트 손잡이. 1인칭 볼트 때 들고 당겼다 밀림, 연사 총은 쏠 때마다 철컥 |
+| `Cylinder` | 파트, 또는 그 이름의 Model/Folder | 리볼버 실린더. 쏠 때마다 한 칸(60°) 돌고, 장전 때 왼쪽으로 열림. **회전축 = 총열 방향, 실린더 가운데** |
+| `Hammer` | 파트, 또는 그 이름의 Model/Folder | 리볼버 공이치기. 쏘면 앞으로 떨어졌다 다시 젖혀짐 |
 
 - 방향: 총의 **가장 긴 쪽 = 총열**. 크기는 아무렇게나 만들어도 됨 → 코드가 `WeaponConfig` 의 `viewLength`(1인칭), `worldLength`(남이 보는 손) 길이에 맞춰 줄이고 키움
 - 움직이는 정도: `src/client/ViewModel.luau` 의 `VM` (`boltTravel`, `boltLift`, `shotSlide`, `magDrop`)

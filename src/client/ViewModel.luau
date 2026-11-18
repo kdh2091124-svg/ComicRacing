@@ -24,10 +24,13 @@ local VM = {
 	kickRoll = 0.08,
 	kickStiffness = 260,
 	kickDamping = 0.42, -- 0.4~0.6 = 살짝 튕기며 복귀 (쫄깃)
-	-- 스웨이 스프링
-	swayAmount = 0.0016,
-	swayStiffness = 120,
-	swayDamping = 0.7,
+	-- 스웨이: 손목이 아니라 "어깨"를 중심으로 팔째 살짝 늦게 따라옴 + 도는 쪽으로 살짝 기울임
+	shoulderPivot = Vector3.new(0.75, -1.4, 0.7), -- 카메라 기준 오른쪽 어깨 (이 점을 중심으로 흔들림)
+	swayAmount = 0.0009,
+	swayMax = 0.07, -- 최대 흔들림 (라디안)
+	swayRoll = 0.9, -- 좌우로 돌 때 기울기 비율
+	swayStiffness = 230, -- 클수록 빨리 따라옴
+	swayDamping = 0.85, -- 1 에 가까울수록 출렁임 없이 착 붙음
 	adsSpeed = 16,
 	raiseTime = 0.25,
 	-- 총 안의 움직이는 파트 (이름으로 찾음): "Mag" = 탄창, "Bolt" = 볼트 손잡이 (파트 또는 그 이름의 Model/Folder)
@@ -35,6 +38,10 @@ local VM = {
 	boltLift = 70, -- 볼트 손잡이 들어 올리는 각도 (도)
 	shotSlide = 0.16, -- 연사 총: 쏠 때마다 볼트가 뒤로 철컥 하는 거리
 	magDrop = 1.2, -- 장전 때 탄창이 빠지는 거리
+	-- 리볼버: "Cylinder" = 실린더, "Hammer" = 공이치기
+	cylinderStep = 60, -- 한 발마다 실린더 도는 각도 (6연발 = 60)
+	cylinderSwing = 75, -- 장전 때 실린더가 왼쪽으로 열리는 각도
+	hammerCock = 35, -- 공이치기 젖혀진 각도 (쏘면 앞으로 떨어졌다 다시 젖혀짐)
 	boltAnimPortion = 0.75, -- boltTime 중 볼트 동작이 차지하는 비율 (나머지는 제자리)
 	sleeveColor = Color3.fromRGB(60, 70, 90), -- 팔을 못 가져올 때 대신 쓰는 색
 }
@@ -71,6 +78,9 @@ local lastKick = 0
 type Moving = { parts: { { part: BasePart, rel: CFrame } }, center: Vector3 }
 local magSet: Moving? = nil
 local boltSet: Moving? = nil
+local cylSet: Moving? = nil
+local hammerSet: Moving? = nil
+local cylAngle, cylTarget = 0, 0
 local kickZ, kickP, kickR = newSpring(), newSpring(), newSpring()
 local swayX, swayY = newSpring(), newSpring()
 local adsBlend = 0
@@ -265,6 +275,9 @@ function ViewModel.Set(weaponId: string)
 	end
 	magSet = collect("Mag")
 	boltSet = collect("Bolt")
+	cylSet = collect("Cylinder")
+	hammerSet = collect("Hammer")
+	cylAngle, cylTarget = 0, 0
 
 	local m = Instance.new("Model")
 	m.Name = "ViewModel"
@@ -281,6 +294,7 @@ end
 function ViewModel.Kick(strength: number?)
 	local s = strength or 1
 	lastKick = os.clock()
+	cylTarget += math.rad(VM.cylinderStep) -- 리볼버 실린더 한 칸
 	kickZ.v += VM.kickBack * 60 * s
 	kickP.v += VM.kickUp * 60 * s
 	kickR.v += (math.random() * 2 - 1) * VM.kickRoll * 60 * s
@@ -349,9 +363,9 @@ function ViewModel.Update(cam: Camera, state)
 	adsBlend += ((state.ads and 1 or 0) - adsBlend) * math.min(dt * VM.adsSpeed, 1)
 	-- 스프링들
 	local md: Vector2 = state.mouseDelta
-	-- 화면을 돌린 반대쪽으로 총이 살짝 늦게 따라옴
-	swayX.v += md.X * VM.swayAmount * 60 * (1 - adsBlend * 0.75)
-	swayY.v += md.Y * VM.swayAmount * 60 * (1 - adsBlend * 0.75)
+	-- 화면을 돌린 반대쪽으로 팔이 살짝 늦게 따라옴
+	swayX.v += md.X * VM.swayAmount * 60 * (1 - adsBlend * 0.6)
+	swayY.v += md.Y * VM.swayAmount * 60 * (1 - adsBlend * 0.6)
 	stepSpring(swayX, VM.swayStiffness, VM.swayDamping, dt)
 	stepSpring(swayY, VM.swayStiffness, VM.swayDamping, dt)
 	stepSpring(kickZ, VM.kickStiffness, VM.kickDamping, dt)
@@ -362,9 +376,13 @@ function ViewModel.Update(cam: Camera, state)
 	local raise = 1 - (1 - math.clamp((t - raiseStart) / VM.raiseTime, 0, 1)) ^ 3
 
 	local base = VM.hip:Lerp(VM.ads, adsBlend)
-	local cf = cam.CFrame * base
+	-- 어깨를 중심으로 팔째 흔들림 (조준 중엔 어깨 대신 거의 눈앞 중심)
+	local sx = math.clamp(swayX.x, -VM.swayMax, VM.swayMax)
+	local sy = math.clamp(swayY.x, -VM.swayMax, VM.swayMax)
+	local pivot = CFrame.new(VM.shoulderPivot:Lerp(Vector3.new(0, -0.6, 0.4), adsBlend))
+	local swayCF = pivot * CFrame.Angles(sy, sx, sx * VM.swayRoll) * pivot:Inverse()
+	local cf = cam.CFrame * swayCF * base
 		* CFrame.new(0, -0.8 * (1 - raise) + breathe, 0) * CFrame.Angles(math.rad(-30) * (1 - raise), 0, 0)
-		* CFrame.Angles(math.clamp(swayY.x, -0.12, 0.12), math.clamp(swayX.x, -0.15, 0.15), math.clamp(swayX.x, -0.15, 0.15) * 0.5)
 		* CFrame.new(0, 0, math.clamp(kickZ.x, -0.2, 0.6)) * CFrame.Angles(math.clamp(kickP.x, -0.2, 0.5), 0, kickR.x)
 
 	-- 장전: 기울이기 → 탄창 빼기 → 꽂기 → 탁 → 복귀
@@ -400,6 +418,26 @@ function ViewModel.Update(cam: Camera, state)
 		local c0 = boltSet.center
 		local move = CFrame.new(0, 0, slide) * CFrame.new(c0) * CFrame.Angles(0, 0, math.rad(VM.boltLift) * lift) * CFrame.new(-c0)
 		for _, e in boltSet.parts do
+			e.part.CFrame = cf * move * e.rel
+		end
+	end
+	-- 리볼버 실린더: 쏠 때마다 한 칸 빠르게 돌고, 장전 때 아래 경첩 기준으로 왼쪽으로 열림
+	if cylSet then
+		cylAngle += (cylTarget - cylAngle) * math.min(dt * 30, 1)
+		local c0 = cylSet.center
+		local hinge = c0 + Vector3.new(0, -0.3, 0)
+		local swing = CFrame.new(hinge) * CFrame.Angles(0, 0, math.rad(VM.cylinderSwing) * leftDrop) * CFrame.new(-hinge)
+		local spin = CFrame.new(c0) * CFrame.Angles(0, 0, cylAngle) * CFrame.new(-c0)
+		for _, e in cylSet.parts do
+			e.part.CFrame = cf * swing * spin * e.rel
+		end
+	end
+	-- 공이치기: 쏘면 앞으로 탁 떨어졌다가 0.25초 동안 다시 젖혀짐
+	if hammerSet then
+		local cock = math.clamp((t - lastKick) / 0.25, 0, 1)
+		local c0 = hammerSet.center
+		local move = CFrame.new(c0) * CFrame.Angles(math.rad(VM.hammerCock) * cock, 0, 0) * CFrame.new(-c0)
+		for _, e in hammerSet.parts do
 			e.part.CFrame = cf * move * e.rel
 		end
 	end
