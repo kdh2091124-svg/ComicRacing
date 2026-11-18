@@ -1018,9 +1018,9 @@ function ViewModel.Update(cam: Camera, state)
 		-- 장전은 한손: 왼손은 총에서 떼고(아래로), 스피드로더 들 때만 들어옴
 		leftAwayAmt = smooth(0, 0.03, r) * (1 - smooth(0.76, 0.86, r))
 		local elbow = elbowPt -- 팔꿈치 축으로 팔째
-		-- 1) 손목 한 번 탁 털듯이 오른쪽 위로 45° → 그 끝에 실린더가 튀어나옴 (0~0.07). 장전 내내 기울인 채 유지
-		--    (한 동작으로 깔끔하게: 기울이기와 실린더 열림을 같은 순간에 끝냄, 덜컥거리는 추가 충격 없음)
-		local tilt = pop(0, 0.07) * (1 - smooth(0.6, 0.645, r))
+		-- 1) 왼쪽으로 한 번 탁! → 그 순간 실린더가 왼쪽으로 튀어나옴 (0~0.06) → 열린 채로 장전 자세(오른쪽 위 45°)로 (0.08~0.2)
+		local snapL = pop(0, 0.06) * (1 - smooth(0.07, 0.16, r))
+		local tilt = smooth(0.08, 0.2, r) * (1 - smooth(0.6, 0.645, r))
 		cylOpen = backOut(math.clamp((r - 0.035) / 0.035, 0, 1)) * (1 - smooth(0.625, 0.645, r))
 		if crossed(0.06) then
 			jolt(0.04, 0, 0) -- 탁 (뒤로만 살짝, 흔들림 없이)
@@ -1033,11 +1033,11 @@ function ViewModel.Update(cam: Camera, state)
 		end
 		-- 2) 총을 아래로 조금 내림 (0.26~0.36) → 스피드로더 맞추며 그대로 쑥 꽂기 (0.3~0.46, 끝에서 탁) → 왼쪽으로 버리기 (0.52~0.58)
 		local down = smooth(0.26, 0.36, r) * (1 - smooth(0.6, 0.68, r))
-		-- 3) 팔 털듯이 오른쪽으로 휙 돌려 실린더 닫기 (0.6~0.645) → 살짝 넘쳤다 쫀득하게 복귀 (0.68~0.8)
+		-- 3) 오른쪽으로 탁! 팔 털듯이 휙 돌려 실린더 닫기 (0.6~0.645) → 살짝 넘쳤다 쫀득하게 복귀 (0.68~0.8)
 		local flick = pop(0.6, 0.645) - pop(0.68, 0.8)
 		-- 기울기: 총 위쪽이 오른쪽(-Z) + 총구 살짝 위(+X) + 손 조금 위로 → 오른쪽 위 45°
 		cf *= CFrame.new((0.08 * tilt - 0.08 * down) * S0, (0.12 * tilt - 0.3 * down) * S0, 0.05 * down * S0)
-			* aboutPoint(elbow, CFrame.Angles(math.rad(12) * tilt + math.rad(4) * flick, math.rad(-8) * flick, math.rad(-45) * tilt - math.rad(30) * flick))
+			* aboutPoint(elbow, CFrame.Angles(math.rad(12) * tilt + math.rad(4) * flick, math.rad(-8) * flick, math.rad(35) * snapL - math.rad(45) * tilt - math.rad(30) * flick))
 		if r >= 0.3 and r < 0.59 and cylSet then
 			-- 다가오기와 꽂기를 겹쳐서 멈춤 없이 한 번에 쑥 → 탁 (툭툭 끊기지 않게)
 			local come = smooth(0.3, 0.43, r) -- 실린더 뒤 축선에 정렬
