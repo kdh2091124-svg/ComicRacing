@@ -6,13 +6,11 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage.Shared
 local VehicleConfig = require(Shared.Config.VehicleConfig)
-local GameplayConfig = require(Shared.Config.GameplayConfig)
 
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local VehicleAction = Remotes:WaitForChild("VehicleAction") :: RemoteEvent
 local Notify = Remotes:WaitForChild("Notify") :: RemoteEvent
 
-local ClientSettings = require(script.Parent:WaitForChild("ClientSettings"))
 
 local player = Players.LocalPlayer
 local HUD = {}
@@ -56,7 +54,6 @@ list.Padding = UDim.new(0, 6)
 list.Parent = menuBar
 
 local spawnBtn = button(menuBar, "차 꺼내기", UDim2.fromOffset(140, 36))
-local settingsBtn = button(menuBar, "설정", UDim2.fromOffset(140, 36))
 
 -- 차 목록 패널
 local spawnPanel = Instance.new("ScrollingFrame")
@@ -89,99 +86,8 @@ for i, def in VehicleConfig.Vehicles do
 	end)
 end
 
--- 권한 설정 패널
-local permPanel = Instance.new("Frame")
-permPanel.Visible = false
-permPanel.Position = UDim2.fromOffset(160, 60)
-permPanel.Size = UDim2.fromOffset(330, 190)
-permPanel.BackgroundColor3 = DARK
-permPanel.BackgroundTransparency = 0.15
-corner(permPanel)
-permPanel.Parent = gui
-
-local permButtons: { [string]: { [string]: TextButton } } = {}
-local function permRow(kind: string, title: string, y: number)
-	local label = Instance.new("TextLabel")
-	label.BackgroundTransparency = 1
-	label.Position = UDim2.fromOffset(12, y)
-	label.Size = UDim2.fromOffset(300, 20)
-	label.Font = Enum.Font.GothamBold
-	label.TextSize = 15
-	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.TextColor3 = Color3.new(1, 1, 1)
-	label.Text = title
-	label.Parent = permPanel
-	permButtons[kind] = {}
-	for i, level in GameplayConfig.Vehicle.permissionLevels do
-		local b = button(permPanel, GameplayConfig.Vehicle.permissionLabels[level], UDim2.fromOffset(96, 30))
-		b.Position = UDim2.fromOffset(12 + (i - 1) * 104, y + 22)
-		b.BackgroundColor3 = Color3.fromRGB(55, 55, 65)
-		b.MouseButton1Click:Connect(function()
-			VehicleAction:FireServer("SetPermission", kind, level)
-		end)
-		permButtons[kind][level] = b
-	end
-end
-permRow("Drive", "내 차 운전 가능", 8)
-permRow("Ride", "내 차 동승 가능", 66)
-
-local function refreshPerms()
-	for kind, buttons in permButtons do
-		local current = player:GetAttribute("Perm_" .. kind)
-		for level, b in buttons do
-			b.BackgroundColor3 = (level == current) and ACCENT or Color3.fromRGB(55, 55, 65)
-			b.TextColor3 = (level == current) and DARK or Color3.new(1, 1, 1)
-		end
-	end
-end
-player.AttributeChanged:Connect(function(name)
-	if string.sub(name, 1, 5) == "Perm_" then
-		refreshPerms()
-	end
-end)
-refreshPerms()
-
--- 주행 보조 켜기/끄기 (내 조작에만 적용)
-do
-	local y = 124
-	local label = Instance.new("TextLabel")
-	label.BackgroundTransparency = 1
-	label.Position = UDim2.fromOffset(12, y)
-	label.Size = UDim2.fromOffset(300, 20)
-	label.Font = Enum.Font.GothamBold
-	label.TextSize = 15
-	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.TextColor3 = Color3.new(1, 1, 1)
-	label.Text = "주행 보조 (스핀 방지, 자동 카운터)"
-	label.Parent = permPanel
-	local onBtn = button(permPanel, "켜기", UDim2.fromOffset(96, 30))
-	onBtn.Position = UDim2.fromOffset(12, y + 22)
-	local offBtn = button(permPanel, "끄기", UDim2.fromOffset(96, 30))
-	offBtn.Position = UDim2.fromOffset(116, y + 22)
-	local function refreshAssist()
-		local on = ClientSettings.Get("DriveAssist")
-		onBtn.BackgroundColor3 = on and ACCENT or Color3.fromRGB(55, 55, 65)
-		onBtn.TextColor3 = on and DARK or Color3.new(1, 1, 1)
-		offBtn.BackgroundColor3 = (not on) and ACCENT or Color3.fromRGB(55, 55, 65)
-		offBtn.TextColor3 = (not on) and DARK or Color3.new(1, 1, 1)
-	end
-	onBtn.MouseButton1Click:Connect(function()
-		ClientSettings.Set("DriveAssist", true)
-	end)
-	offBtn.MouseButton1Click:Connect(function()
-		ClientSettings.Set("DriveAssist", false)
-	end)
-	ClientSettings.Changed:Connect(refreshAssist)
-	refreshAssist()
-end
-
 spawnBtn.MouseButton1Click:Connect(function()
 	spawnPanel.Visible = not spawnPanel.Visible
-	permPanel.Visible = false
-end)
-settingsBtn.MouseButton1Click:Connect(function()
-	permPanel.Visible = not permPanel.Visible
-	spawnPanel.Visible = false
 end)
 
 -- 운전 패널 (아래 가운데)

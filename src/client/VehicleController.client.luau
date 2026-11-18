@@ -21,7 +21,6 @@ local MobileControls = require(script.Parent:WaitForChild("MobileControls"))
 local HUD = require(script.Parent:WaitForChild("HUD"))
 local VehicleEffects = require(script.Parent:WaitForChild("VehicleEffects"))
 local TrialClient = require(script.Parent:WaitForChild("TrialClient"))
-local ClientSettings = require(script.Parent:WaitForChild("ClientSettings"))
 local EffectsConfig = require(Shared.Config.EffectsConfig)
 
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
@@ -198,8 +197,9 @@ local function step(dt: number)
 	local angVel = chassis.AssemblyAngularVelocity
 	local fwdSpeed = vel:Dot(fwd)
 	local input = InputState.Read()
-	-- 설정 > 주행 보조 (끄면 스핀 방지, 자동 카운터, 벽 방향 맞춤이 꺼짐)
-	local assist = ClientSettings.Get("DriveAssist") and 1 or 0
+	-- 주행 보조 (스핀 방지, 벽 긁은 뒤 방향 맞춤)는 항상 켜짐. 설정 메뉴는 없앰 (개발자 결정)
+	-- 자동 카운터 스티어는 Physics.counterSteerAssist = 0 으로 꺼둠
+	local assist = 1
 
 	-- 범퍼에 닿음: "통" 하고 진행 방향 반대로 살짝 튕겨 나감 (데미지 없음)
 	-- 멈춰 있다가 맞으면 범퍼에서 멀어지는 쪽으로
