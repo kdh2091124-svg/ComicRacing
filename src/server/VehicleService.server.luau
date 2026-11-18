@@ -14,6 +14,7 @@ local GameplayConfig = require(Shared.Config.GameplayConfig)
 local VehicleFactory = require(script.Parent.VehicleFactory)
 local PermissionService = require(script.Parent.PermissionService)
 local HealthService = require(script.Parent.HealthService)
+local ArenaBounds = require(script.Parent.ArenaBounds)
 
 local spawnAt -- 아래에서 정의 (HealthService 부활에서도 씀)
 
@@ -353,6 +354,10 @@ VehicleFX.OnServerEvent:Connect(function(player: Player, kind: any, a: any, b: a
 			HealthService.Damage(model, GameplayConfig.Health.lavaDps * 0.25)
 		end
 	elseif kind == "Drown" then
+		-- 아레나에선 물 빠짐 폭발 대신 스나이퍼가 락온 → 바닥 직전 사격 (ArenaService)
+		if ArenaBounds.IsArena() then
+			return
+		end
 		if model.PrimaryPart.Position.Y < GameplayConfig.Health.drownY + 5 then
 			HealthService.Explode(model)
 		end

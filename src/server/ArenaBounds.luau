@@ -21,6 +21,13 @@ local function data()
 	return center, outerR, pitR, floorY
 end
 
+-- 떨어지는 장외 대상을 쏘는 높이 (이 "바닥"에 닿기 직전에 쏨)
+function ArenaBounds.ShotY(): number?
+	local map = workspace:FindFirstChild("Map")
+	local y = map and map:GetAttribute("ArenaShotY")
+	return type(y) == "number" and y or nil
+end
+
 function ArenaBounds.IsArena(): boolean
 	return data() ~= nil
 end

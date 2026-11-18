@@ -466,6 +466,7 @@ function ArenaBuilder.Build(options: { keepTerrain: boolean? }?)
 	map:SetAttribute("ArenaOuterR", outer.r1)
 	map:SetAttribute("ArenaPitR", A.pitRadius)
 	map:SetAttribute("ArenaFloorY", inner.top - A.floorDrop)
+	map:SetAttribute("ArenaShotY", A.baseY + 14) -- 떨어지는 차를 쏘는 "바닥" (구멍 용암 높이 근처)
 
 	-- 8) 스폰: 바깥 고리. 나중에 PVP 부활 위치로 쓸 표시 8개 (ArenaSpawn)
 	local rmOuter = (outer.r0 + outer.r1) / 2
