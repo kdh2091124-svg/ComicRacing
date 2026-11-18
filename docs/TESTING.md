@@ -11,7 +11,17 @@
    그러면 `Workspace.Map` 이 생긴다. 이제 직접 고쳐도 되고, Rojo는 맵을 건드리지 않는다.
 5. 꼭 **저장하거나 게시**한다. 맵은 Git이 아니라 플레이스 파일에 저장되기 때문이다.
 
-## 섬 월드 (최신 맵)
+## PVP 깔때기 아레나 (최신 맵)
+Studio 명령줄 (기존 Workspace.Map 은 ServerStorage 로 백업, 지형은 비움):
+```lua
+require(game.ServerStorage.Tools.ArenaBuilder:Clone()).Build()
+```
+- 고리 3층(바깥 높음 → 안쪽 낮음) + 층 사이 경사면 + 넓은 나선 경사로 8개(폭 100) + 구멍 가로지르는 다리 + 가운데 장외 구멍
+- 크기/높이/경사로 위치/기울기는 `src/tools/ArenaBuilder.luau` 맨 위 `A` 표에서만 고치면 됨
+- 하늘색 공(BuffSpawn) = 나중에 버프 아이템이 나올 자리 표시 (아직 먹어도 아무 일 없음)
+- 출력창에 경사로 최대 기울기가 나오고, 경사로끼리 겹치면 경고가 뜸
+
+## 섬 월드 (이전 맵)
 Studio 명령줄 (기존 Workspace.Map 은 ServerStorage 로 백업, 지형은 새로 만듦):
 ```lua
 require(game.ServerStorage.Tools.IslandBuilder:Clone()).Build()
