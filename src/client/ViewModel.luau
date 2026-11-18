@@ -177,7 +177,7 @@ local prevReload, prevBolt = 0, 0 -- 장전/볼트 "탁" 순간 감지용
 -- 리볼버 장전에서 스피드로더 탄이 실린더로 들어가는 순간 (장전 진행도 0~1)
 local REVOLVER_LOAD = 0.46
 -- 리볼버 탄피가 빠지기 시작하는 순간과 한 발씩 간격 (WeaponClient 탄피 효과와 같은 값)
-local REVOLVER_SHELL, REVOLVER_SHELL_GAP = 0.11, 0.022
+local REVOLVER_SHELL, REVOLVER_SHELL_GAP = 0.18, 0.02 -- 총구를 위로 다 세운 뒤부터
 ViewModel.RevolverShell = { start = REVOLVER_SHELL, gap = REVOLVER_SHELL_GAP }
 
 -- 끝에서 살짝 넘쳤다가 자리 잡는 곡선 (0→1)
@@ -1021,8 +1021,10 @@ function ViewModel.Update(cam: Camera, state)
 		-- 1) 왼쪽으로 빠르게 탁 기울였다가 (0~0.05) 바로 복귀 (0.06~0.13) → 그 순간 실린더가 튀어나옴
 		--    복귀가 다 끝난 뒤에야 장전 자세로 (기울였다 돌아오는 게 가려지지 않게)
 		local snapL = pop(0, 0.055) * (1 - smooth(0.06, 0.16, r))
-		-- 2) 장전 자세: 오른쪽으로 살짝 + 총구 아래로 아주 살짝 (0.14~0.3), 열린 채로 장전 (스르륵 부드럽게)
-		local tilt = smooth(0.14, 0.3, r) * (1 - smooth(0.52, 0.6, r))
+		-- 2) 총구를 위로 세워서 (0.1~0.18) 실린더 안 탄피가 하나씩 빠지는 걸 보여 줌 (0.18~0.29) → 내림 (0.29~0.37)
+		local raise = smooth(0.1, 0.18, r) * (1 - smooth(0.29, 0.37, r))
+		-- 3) 장전 자세: 오른쪽으로 살짝 + 총구 아래로 아주 살짝 (0.29~0.38), 열린 채로 장전 (스르륵 부드럽게)
+		local tilt = smooth(0.29, 0.38, r) * (1 - smooth(0.52, 0.6, r))
 		cylOpen = backOut(math.clamp((r - 0.03) / 0.03, 0, 1)) * (1 - smooth(0.615, 0.635, r))
 		if crossed(0.05) then
 			jolt(0.04, 0, 0) -- 탁 (뒤로만 살짝, 흔들림 없이)
@@ -1034,19 +1036,20 @@ function ViewModel.Update(cam: Camera, state)
 			cylSpinV = 0
 		end
 		--    스피드로더 맞추며 그대로 쑥 꽂기 (0.3~0.46, 끝에서 탁) → 왼쪽으로 버리기 (0.52~0.58)
-		-- 3) 닫기: 왼쪽으로 살짝 기울였다가 (0.55~0.61) → 오른쪽으로 탁! (0.61~0.64, 실린더 닫힘) → 부드럽게 복귀 (0.66~0.82)
+		-- 4) 닫기: 왼쪽으로 살짝 기울였다가 (0.55~0.61) → 오른쪽으로 탁! (0.61~0.64, 실린더 닫힘) → 부드럽게 복귀 (0.66~0.82)
 		local windL = smooth(0.55, 0.61, r) * (1 - smooth(0.61, 0.635, r))
 		local flick = pop(0.61, 0.64) * (1 - smooth(0.66, 0.82, r))
 		-- 각도 (총 기준): Z+ = 총 위쪽이 왼쪽, Z- = 오른쪽 / X- = 총구 아래
-		cf *= CFrame.new(0.03 * tilt * S0, -0.08 * tilt * S0, 0)
+		-- (세울 때 몸 쪽으로 당겨오지 않게 손을 살짝 앞·위로)
+		cf *= CFrame.new(0.03 * tilt * S0, (-0.08 * tilt + 0.12 * raise) * S0, -0.2 * raise * S0)
 			* aboutPoint(elbow, CFrame.Angles(
-				math.rad(-5) * tilt, -- 장전 땐 총구 아주 살짝 아래
+				math.rad(-5) * tilt + math.rad(40) * raise, -- 탄피 뺄 땐 총구 위로, 장전 땐 아주 살짝 아래
 				0,
 				math.rad(40) * snapL - math.rad(18) * tilt + math.rad(12) * windL - math.rad(28) * flick -- 왼쪽 탁 / 오른쪽 살짝 / 왼쪽 준비 / 오른쪽 탁
 			))
-		if r >= 0.3 and r < 0.59 and cylSet then
+		if r >= 0.31 and r < 0.59 and cylSet then
 			-- 다가오기와 꽂기를 겹쳐서 멈춤 없이 한 번에 쑥 → 탁 (툭툭 끊기지 않게)
-			local come = smooth(0.3, 0.43, r) -- 실린더 뒤 축선에 정렬
+			local come = smooth(0.31, 0.43, r) -- 실린더 뒤 축선에 정렬
 			local pu = math.clamp((r - 0.4) / (REVOLVER_LOAD - 0.4), 0, 1)
 			local push = pu * pu -- 점점 빨라지며 꽂힘 (끝에서 탁)
 			local leave = smooth(0.52, 0.58, r)
