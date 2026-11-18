@@ -661,7 +661,7 @@ local function enter(char: Model, vehicle: Model?)
 							local p = ViewModel.CylinderPosition()
 							if p then
 								local jitter = Vector3.new(math.random() - 0.5, 0, math.random() - 0.5) * 0.15
-								GunFX.Shell(p + jitter, Vector3.new(math.random() - 0.5, -2.5, math.random() - 0.5) * 0.25, -- 털어서 아래로 툭 -Vector3.yAxis * 0.2, { shell = "rifle" })
+								GunFX.Shell(p + jitter, Vector3.new(math.random() - 0.5, -2.5, math.random() - 0.5) * 0.25, -Vector3.yAxis * 0.2, { shell = "rifle" }) -- 털어서 아래로 툭
 							end
 						end)
 					end
