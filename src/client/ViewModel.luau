@@ -257,8 +257,11 @@ local function stepFlying(camPos: Vector3, dt: number)
 				f.rot = CFrame.fromAxisAngle(f.ang / w, w * dt) * f.rot
 			end
 			local root = CFrame.new(camPos + f.pos) * f.rot
+			-- 눈에 너무 가까우면 안 보이게 (렌즈에 붙어서 화면 가득 커 보이는 것 방지)
+			local hide = f.pos.Magnitude < 1.3 and 1 or 0
 			for _, e in f.parts do
 				e.part.CFrame = root * e.rel
+				e.part.LocalTransparencyModifier = hide
 			end
 		end
 	end
@@ -1231,11 +1234,18 @@ function ViewModel.Update(cam: Camera, state)
 					cr.part.LocalTransparencyModifier = 0
 				end
 				if lastShellR < th and r >= th then
-					local back = -cr.part.CFrame.RightVector -- 실린더 뒤쪽
+					-- 실린더 뒤쪽은 내 눈 쪽이라 그대로 날리면 탄피가 얼굴로 날아와 엄청 커 보임
+					-- → 눈 쪽으로 오는 성분은 빼고, 아래로 툭 떨어지며 살짝 옆으로
+					local back = -cr.part.CFrame.RightVector
+					local toEye = -cam.CFrame.LookVector
+					local v = back * 1.2
+					if v:Dot(toEye) > 0 then
+						v -= toEye * v:Dot(toEye)
+					end
+					v += -Vector3.yAxis * 1.5 + cam.CFrame.RightVector * (math.random() - 0.5) * 0.6
 					local w = cr.part.CFrame * CFrame.new(-cr.part.Size.X * 0.7, 0, 0)
-					throwParts({ { part = cr.part, world = w } },
-						back * 3 + Vector3.new(math.random() - 0.5, 0, math.random() - 0.5) * 0.6,
-						Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5) * 8,
+					throwParts({ { part = cr.part, world = w } }, v,
+						Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5) * 6,
 						cylSpent[cr.idx + 1] and Color3.fromRGB(150, 110, 50) or nil) -- 쏜 탄은 어두운 빈 탄피
 				end
 			end
