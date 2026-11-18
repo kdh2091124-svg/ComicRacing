@@ -175,7 +175,10 @@ local accSmooth = Vector3.zero
 local prevReload, prevBolt = 0, 0 -- 장전/볼트 "탁" 순간 감지용
 
 -- 리볼버 장전에서 스피드로더 탄이 실린더로 들어가는 순간 (장전 진행도 0~1)
-local REVOLVER_LOAD = 0.415
+local REVOLVER_LOAD = 0.48
+-- 리볼버 탄피가 빠지기 시작하는 순간과 한 발씩 간격 (WeaponClient 탄피 효과와 같은 값)
+local REVOLVER_SHELL, REVOLVER_SHELL_GAP = 0.11, 0.022
+ViewModel.RevolverShell = { start = REVOLVER_SHELL, gap = REVOLVER_SHELL_GAP }
 
 -- 끝에서 살짝 넘쳤다가 자리 잡는 곡선 (0→1)
 local function backOut(u: number): number
@@ -1013,34 +1016,30 @@ function ViewModel.Update(cam: Camera, state)
 			return backOut(math.clamp((r - a) / (b - a), 0, 1))
 		end
 		-- 장전은 한손: 왼손은 총에서 떼고(아래로), 스피드로더 들 때만 들어옴
-		leftAwayAmt = smooth(0, 0.03, r) * (1 - smooth(0.74, 0.84, r))
+		leftAwayAmt = smooth(0, 0.03, r) * (1 - smooth(0.76, 0.86, r))
 		local elbow = elbowPt -- 팔꿈치 축으로 팔째
-		-- 1) "/" 반대 방향(총 위쪽이 왼쪽)으로 한 번에 탁! → 실린더 열리며 휙 돎 (0~0.035)
-		local snapOpen = pop(0, 0.035) * (1 - smooth(0.06, 0.13, r))
-		cf *= aboutPoint(elbow, CFrame.Angles(math.rad(-6) * snapOpen, 0, math.rad(42) * snapOpen))
-		cylOpen = backOut(math.clamp((r - 0.012) / 0.028, 0, 1)) * (1 - smooth(0.555, 0.58, r))
-		if crossed(0.03) then
-			jolt(0.04, -0.06, 0.18) -- 탁!
-			cylSpinV = 18 -- 열리면서 촤라락 돎
+		-- 1) 45° 기울이며 탁! → 실린더가 튀어나옴 (0~0.08). 장전 내내 기울인 채 유지
+		local tilt = pop(0, 0.08) * (1 - smooth(0.6, 0.645, r))
+		cylOpen = backOut(math.clamp((r - 0.05) / 0.04, 0, 1)) * (1 - smooth(0.625, 0.645, r))
+		if crossed(0.07) then
+			jolt(0.06, -0.05, 0.16) -- 탁! (실린더 빠짐)
+			cylSpinV = 14 -- 빠지면서 촤라락 돎
 		end
+		-- 탄피: 실린더가 다 빠진 뒤 하나씩 슬슬 빠짐 (WeaponClient, REVOLVER_SHELL ~)
 		-- 스피드로더 넣기 전에 실린더 헛돌기 멈추고 약실 칸에 딱 맞춤
-		if r >= 0.2 and r < 0.58 then
+		if r >= 0.24 and r < 0.64 then
 			cylSpinV = 0
 		end
-		-- 2) 총구를 휙 세우고 (0.08~0.14) → 아래로 탁! 털어서 탄피 6개 한 번에 빠짐 (0.16, WeaponClient)
-		--    몸 쪽으로 당겨오지 않게: 조금만 세우고 앞·위로 내밂
-		local up = pop(0.08, 0.14) * (1 - smooth(0.54, 0.62, r))
-		local flick = smooth(0.15, 0.16, r) * (1 - smooth(0.17, 0.23, r))
-		cf *= CFrame.new(0, (0.2 * up - 0.12 * flick) * S0, -0.35 * up * S0)
-			* aboutPoint(elbow, CFrame.Angles(math.rad(38) * up - math.rad(8) * flick, math.rad(-12) * up, math.rad(-10) * up))
-		if crossed(0.16) then
-			jolt(0.1, -0.08, 0.03) -- 탁! (탄피 쏟아짐)
-		end
-		-- 3) 스피드로더를 실린더 뒤 축에 맞추고 (0.22~0.36) → 한 번에 탁! 꽂기 (0.39~0.415) → 왼쪽으로 빼서 버리기 (0.45~0.5)
-		if r >= 0.22 and r < 0.51 and cylSet then
-			local come = smooth(0.22, 0.36, r) -- 실린더 뒤 축선에 정렬
-			local push = smooth(0.39, REVOLVER_LOAD, r) -- 축을 따라 똑바로 탁
-			local leave = smooth(0.45, 0.5, r)
+		-- 2) 총을 아래로 조금 내림 (0.26~0.36) → 스피드로더 맞추고 (0.3~0.44) → 탁! 꽂기 (0.455~0.48) → 왼쪽으로 버리기 (0.52~0.58)
+		local down = smooth(0.26, 0.36, r) * (1 - smooth(0.6, 0.68, r))
+		-- 3) 팔 털듯이 오른쪽으로 휙 돌려 실린더 닫기 (0.6~0.645) → 살짝 넘쳤다 쫀득하게 복귀 (0.68~0.8)
+		local flick = pop(0.6, 0.645) - pop(0.68, 0.8)
+		cf *= CFrame.new(-0.08 * down * S0, -0.3 * down * S0, 0.05 * down * S0)
+			* aboutPoint(elbow, CFrame.Angles(math.rad(-5) * tilt + math.rad(4) * flick, math.rad(-8) * flick, math.rad(45) * tilt - math.rad(35) * flick))
+		if r >= 0.3 and r < 0.59 and cylSet then
+			local come = smooth(0.3, 0.44, r) -- 실린더 뒤 축선에 정렬
+			local push = smooth(0.455, REVOLVER_LOAD, r) -- 축을 따라 똑바로 탁
+			local leave = smooth(0.52, 0.58, r)
 			local swing = hingeLocal and (hingeLocal * CFrame.Angles(0, 0, math.rad(VM.cylinderSwing) * cylOpen) * hingeLocal:Inverse())
 				or aboutPoint(cylSet.pivot + Vector3.new(0, -0.12 * S0, 0), CFrame.Angles(0, 0, math.rad(VM.cylinderSwing) * cylOpen))
 			local depth = cylRearZ + loaderLength / 2 -- 링이 실린더 뒷면에 딱 붙는 위치
@@ -1053,17 +1052,14 @@ function ViewModel.Update(cam: Camera, state)
 			jolt(0.12, -0.05, 0) -- 탁!
 			refillCyl = true -- 탄이 스피드로더에서 실린더로
 		end
-		if crossed(0.5) and speedLoader then
+		if crossed(0.57) and speedLoader then
 			local ringPart = speedLoader:FindFirstChild("Ring")
 			if ringPart and ringPart:IsA("BasePart") then
 				throwParts({ { part = ringPart, world = ringPart.CFrame } }, -cam.CFrame.RightVector * 4 + Vector3.yAxis * 3, Vector3.new(3, 5, 0)) -- 빈 링만 버림 (포물선)
 			end
 		end
-		-- 4) 내리면서 "/" 방향(총 위쪽이 오른쪽)으로 한 번에 탁! 실린더 닫기 (0.555~0.585) → 살짝 돎 → 제자리
-		local snapClose = pop(0.555, 0.585) * (1 - smooth(0.62, 0.72, r))
-		cf *= aboutPoint(elbow, CFrame.Angles(0, math.rad(-6) * snapClose, math.rad(-48) * snapClose))
-		if crossed(0.58) then
-			jolt(0.1, 0.05, -0.22) -- 탁!
+		if crossed(0.64) then
+			jolt(0.1, 0.05, -0.22) -- 탁! (실린더 닫힘)
 			cylSpinV = 9
 		end
 	elseif state.reload and style == "cola" then
@@ -1190,8 +1186,9 @@ function ViewModel.Update(cam: Camera, state)
 		if refillCyl then
 			cylSpent = { false, false, false, false, false, false } -- 스피드로더로 새 탄 6발
 		end
-		local emptyNow = style == "revolver" and r >= 0.16 and r < REVOLVER_LOAD
 		for _, cr in cylRounds do
+			-- 장전 중: 탄피가 한 칸씩 슬슬 빠져서 빔 → 스피드로더 꽂으면 다시 참
+			local emptyNow = style == "revolver" and r >= REVOLVER_SHELL + cr.idx * REVOLVER_SHELL_GAP and r < REVOLVER_LOAD
 			-- 쏜 칸은 비어 보임 (쏠 때마다 실린더가 돌며 한 칸씩 빔)
 			cr.part.LocalTransparencyModifier = (emptyNow or cylSpent[cr.idx + 1]) and 1 or 0
 		end
