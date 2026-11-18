@@ -1020,10 +1020,10 @@ function ViewModel.Update(cam: Camera, state)
 		local elbow = elbowPt -- 팔꿈치 축으로 팔째
 		-- 1) 왼쪽으로 빠르게 탁 기울였다가 (0~0.05) 바로 복귀 (0.06~0.13) → 그 순간 실린더가 튀어나옴
 		--    복귀가 다 끝난 뒤에야 장전 자세로 (기울였다 돌아오는 게 가려지지 않게)
-		local snapL = pop(0, 0.05) * (1 - smooth(0.06, 0.13, r))
-		-- 2) 장전 자세: 오른쪽으로 기울이고 총구는 아래로 살짝 (0.15~0.27), 열린 채로 장전
-		local tilt = smooth(0.15, 0.27, r) * (1 - smooth(0.6, 0.64, r))
-		cylOpen = backOut(math.clamp((r - 0.03) / 0.03, 0, 1)) * (1 - smooth(0.62, 0.64, r))
+		local snapL = pop(0, 0.055) * (1 - smooth(0.06, 0.16, r))
+		-- 2) 장전 자세: 오른쪽으로 살짝 + 총구 아래로 아주 살짝 (0.14~0.3), 열린 채로 장전 (스르륵 부드럽게)
+		local tilt = smooth(0.14, 0.3, r) * (1 - smooth(0.52, 0.6, r))
+		cylOpen = backOut(math.clamp((r - 0.03) / 0.03, 0, 1)) * (1 - smooth(0.615, 0.635, r))
 		if crossed(0.05) then
 			jolt(0.04, 0, 0) -- 탁 (뒤로만 살짝, 흔들림 없이)
 			cylSpinV = 14 -- 빠지면서 촤라락 돎
@@ -1034,14 +1034,15 @@ function ViewModel.Update(cam: Camera, state)
 			cylSpinV = 0
 		end
 		--    스피드로더 맞추며 그대로 쑥 꽂기 (0.3~0.46, 끝에서 탁) → 왼쪽으로 버리기 (0.52~0.58)
-		-- 3) 오른쪽 위로 빠르게 탁! 쳐서 실린더 닫기 (0.6~0.64) → 살짝 넘쳤다 쫀득하게 복귀 (0.68~0.8)
-		local flick = pop(0.6, 0.64) - pop(0.68, 0.8)
-		-- 각도 (총 기준): Z+ = 총 위쪽이 왼쪽, Z- = 오른쪽 / X+ = 총구 위, X- = 총구 아래
-		cf *= CFrame.new((0.05 * tilt + 0.06 * flick) * S0, (-0.18 * tilt + 0.1 * flick) * S0, 0.05 * tilt * S0)
+		-- 3) 닫기: 왼쪽으로 살짝 기울였다가 (0.55~0.61) → 오른쪽으로 탁! (0.61~0.64, 실린더 닫힘) → 부드럽게 복귀 (0.66~0.82)
+		local windL = smooth(0.55, 0.61, r) * (1 - smooth(0.61, 0.635, r))
+		local flick = pop(0.61, 0.64) * (1 - smooth(0.66, 0.82, r))
+		-- 각도 (총 기준): Z+ = 총 위쪽이 왼쪽, Z- = 오른쪽 / X- = 총구 아래
+		cf *= CFrame.new(0.03 * tilt * S0, -0.08 * tilt * S0, 0)
 			* aboutPoint(elbow, CFrame.Angles(
-				math.rad(-14) * tilt + math.rad(18) * flick, -- 장전 땐 아래로, 닫을 땐 위로
-				math.rad(-8) * flick,
-				math.rad(40) * snapL - math.rad(40) * tilt - math.rad(30) * flick -- 왼쪽 탁 / 오른쪽 기울임 / 오른쪽 탁
+				math.rad(-5) * tilt, -- 장전 땐 총구 아주 살짝 아래
+				0,
+				math.rad(40) * snapL - math.rad(18) * tilt + math.rad(12) * windL - math.rad(28) * flick -- 왼쪽 탁 / 오른쪽 살짝 / 왼쪽 준비 / 오른쪽 탁
 			))
 		if r >= 0.3 and r < 0.59 and cylSet then
 			-- 다가오기와 꽂기를 겹쳐서 멈춤 없이 한 번에 쑥 → 탁 (툭툭 끊기지 않게)
