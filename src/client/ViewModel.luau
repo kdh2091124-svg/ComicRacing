@@ -26,11 +26,12 @@ local VM = {
 	kickDamping = 0.42, -- 0.4~0.6 = 살짝 튕기며 복귀 (쫄깃)
 	-- 스웨이: 손목이 아니라 "어깨"를 중심으로 팔째 살짝 늦게 따라옴 + 도는 쪽으로 살짝 기울임
 	shoulderPivot = Vector3.new(0.75, -1.4, 0.7), -- 카메라 기준 오른쪽 어깨 (이 점을 중심으로 흔들림)
-	swayAmount = 0.00006, -- 마우스 속도(픽셀/초) 1 당 흔들림 (라디안)
-	swayMax = 0.07, -- 최대 흔들림 (라디안)
+	swayAmount = 0.00008, -- 마우스 속도(픽셀/초) 1 당 흔들림 (라디안)
+	swayMax = 0.16, -- 최대 흔들림 (라디안, 넓게)
 	swayRoll = 0.9, -- 좌우로 돌 때 기울기 비율
-	swayStiffness = 230, -- 클수록 빨리 따라옴
-	swayDamping = 0.85, -- 1 에 가까울수록 출렁임 없이 착 붙음
+	swayStiffness = 150, -- 기본 당기는 힘
+	swayStiffBoost = 5, -- 많이 밀렸을수록 당기는 힘이 (1 + 밀린비율² × 이 값)배 → 멀면 확 빠르게
+	swayDamping = 0.5, -- 0.4~0.6 = 살짝 튕기며 자리 잡음 (쫄깃), 1 = 출렁임 없음
 	adsSpeed = 16,
 	adsDistance = 1.1, -- 총에 "Aim" 표시가 있으면 조준할 때 그 점이 눈앞 이 거리에 정확히 옴
 	raiseTime = 0.25,
@@ -62,6 +63,20 @@ local function stepSpring(s: Spring, k: number, zeta: number, dt: number, target
 	for _ = 1, steps do
 		local a = k * (goal - s.x) - c * s.v
 		s.v += a * h
+		s.x += s.v * h
+	end
+end
+
+-- 스웨이 스프링: 목표에서 멀수록 당기는 힘이 커짐 (멀면 빠르게, 가까우면 부드럽게 + 살짝 튕김)
+local function stepSway(s: Spring, target: number, dt: number, maxV: number, k0: number, boost: number, zeta: number)
+	local steps = math.max(math.ceil(dt / (1 / 240)), 1)
+	local h = dt / steps
+	for _ = 1, steps do
+		local diff = target - s.x
+		local r = math.min(math.abs(diff) / maxV, 2)
+		local k = k0 * (1 + r * r * boost)
+		local c = 2 * zeta * math.sqrt(k)
+		s.v += (k * diff - c * s.v) * h
 		s.x += s.v * h
 	end
 end
@@ -415,8 +430,8 @@ function ViewModel.Update(cam: Camera, state)
 	local inst = dt > 0 and md / dt or Vector2.zero
 	mouseVel = mouseVel:Lerp(inst, math.min(dt * 18, 1))
 	local amt = VM.swayAmount * (1 - adsBlend * 0.6)
-	stepSpring(swayX, VM.swayStiffness, VM.swayDamping, dt, mouseVel.X * amt)
-	stepSpring(swayY, VM.swayStiffness, VM.swayDamping, dt, mouseVel.Y * amt)
+	stepSway(swayX, mouseVel.X * amt, dt, VM.swayMax, VM.swayStiffness, VM.swayStiffBoost, VM.swayDamping)
+	stepSway(swayY, mouseVel.Y * amt, dt, VM.swayMax, VM.swayStiffness, VM.swayStiffBoost, VM.swayDamping)
 	stepSpring(kickZ, VM.kickStiffness, VM.kickDamping, dt)
 	stepSpring(kickP, VM.kickStiffness, VM.kickDamping, dt)
 	stepSpring(kickR, VM.kickStiffness * 0.8, VM.kickDamping, dt)
