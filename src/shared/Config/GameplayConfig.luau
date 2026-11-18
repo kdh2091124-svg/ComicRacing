@@ -156,6 +156,7 @@ GameplayConfig.Camera = {
 GameplayConfig.Vehicle = {
 	spawnCooldown = 3,
 	exitMaxSpeed = 12, -- 이 속도보다 빠르면 못 내림 (운전자/동승자 모두)
+	driverlessBrake = 1.2, -- 운전수가 없는(죽은) 차가 미끄러지다 멈추는 세기 (클수록 빨리 멈춤)
 	-- 내 차 권한 (개발자 확정: 모두 / 친구만 / 나만). 기본값 TEMP.
 	permissionLevels = { "Everyone", "Friends", "OwnerOnly" },
 	permissionLabels = { Everyone = "모두", Friends = "친구만", OwnerOnly = "나만" },

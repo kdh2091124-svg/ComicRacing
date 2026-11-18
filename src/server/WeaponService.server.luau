@@ -214,21 +214,36 @@ local function sameCrew(a: Model?, b: Model?): boolean
 	return not G.friendlyFire and a ~= nil and a == b
 end
 
-local function damagePerson(shooter: Player, hum: Humanoid, amount: number): boolean
+-- 맞은 사람 화면: 빨갛게 번쩍 + 맞은 방향 화살표 (from = 쏜 곳)
+local function hurtNotify(hum: Humanoid, amount: number, from: Vector3, kind: string)
+	local victim = Players:GetPlayerFromCharacter(hum.Parent)
+	if victim then
+		Remote:FireClient(victim, "Hurt", amount, from, kind)
+	end
+end
+
+local function damagePerson(shooter: Player, hum: Humanoid, amount: number, from: Vector3): boolean
 	if hum.Health <= 0 then
 		return false
 	end
 	hum:SetAttribute("LastAttacker", shooter.UserId)
 	hum:TakeDamage(amount)
+	hurtNotify(hum, amount, from, "person")
 	return hum.Health <= 0
 end
 
-local function damageCar(shooter: Player, model: Model, amount: number): boolean
+local function damageCar(shooter: Player, model: Model, amount: number, from: Vector3): boolean
 	if model:GetAttribute("Exploded") then
 		return false
 	end
 	model:SetAttribute("LastAttacker", shooter.UserId)
 	HealthService.Damage(model, amount)
+	-- 차에 탄 사람들에게도 "내 차가 맞음" 알림
+	for _, seat in model:GetDescendants() do
+		if seat:IsA("Seat") and seat.Occupant then
+			hurtNotify(seat.Occupant, amount, from, "car")
+		end
+	end
 	local hp = model:GetAttribute("HP")
 	return type(hp) == "number" and hp <= 0
 end
@@ -311,7 +326,6 @@ local function explodeShell(s: Shell, at: Vector3)
 
 	local shooterVehicle = s.owner.Character and vehicleOf(s.owner.Character:FindFirstChildOfClass("Humanoid") and s.owner.Character:FindFirstChildOfClass("Humanoid").SeatPart)
 	local r = s.def.splashRadius
-	local hitAny, killed = false, false
 	for _, p in Players:GetPlayers() do
 		local char = p.Character
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -319,8 +333,9 @@ local function explodeShell(s: Shell, at: Vector3)
 		if hum and root and root:IsA("BasePart") and p ~= s.owner then
 			local d = (root.Position - at).Magnitude
 			if d < r and not sameCrew(vehicleOf(hum.SeatPart), shooterVehicle) then
-				hitAny = true
-				killed = damagePerson(s.owner, hum, s.def.damage * (1 - 0.6 * d / r)) or killed
+				local amount = s.def.damage * (1 - 0.6 * d / r)
+				local killed = damagePerson(s.owner, hum, amount, at)
+				Remote:FireClient(s.owner, "Hit", "person", killed, amount, root.Position, char)
 			end
 		end
 	end
@@ -330,8 +345,9 @@ local function explodeShell(s: Shell, at: Vector3)
 			local d = (chassis.Position - at).Magnitude - chassis.Size.Magnitude / 2
 			if d < r then
 				local fall = 1 - 0.6 * math.max(d, 0) / r
-				hitAny = true
-				killed = damageCar(s.owner, model, s.def.carDamage * fall) or killed
+				local amount = s.def.carDamage * fall
+				local killed = damageCar(s.owner, model, amount, at)
+				Remote:FireClient(s.owner, "Hit", "car", killed, amount, chassis.Position, model)
 				-- 밀어내기: 터진 곳에서 멀어지는 쪽 + 살짝 위로
 				local away = chassis.Position - at
 				away = Vector3.new(away.X, 0, away.Z)
@@ -345,9 +361,6 @@ local function explodeShell(s: Shell, at: Vector3)
 				end
 			end
 		end
-	end
-	if hitAny then
-		Remote:FireClient(s.owner, "Hit", "splash", killed)
 	end
 end
 
@@ -444,11 +457,12 @@ Remote.OnServerEvent:Connect(function(player, action, a, b, c)
 				return
 			end
 			local mult = hitPart.Name == "Head" and def.headMultiplier or 1
-			local killed = damagePerson(player, targetHum, def.damage * mult)
-			Remote:FireClient(player, "Hit", mult > 1 and "head" or "person", killed)
+			local amount = def.damage * mult
+			local killed = damagePerson(player, targetHum, amount, a)
+			Remote:FireClient(player, "Hit", mult > 1 and "head" or "person", killed, amount, hitPos, target)
 		elseif kind == "car" and target and target ~= myVehicle then
-			local killed = damageCar(player, target, def.carDamage)
-			Remote:FireClient(player, "Hit", "car", killed)
+			local killed = damageCar(player, target, def.carDamage, a)
+			Remote:FireClient(player, "Hit", "car", killed, def.carDamage, hitPos, target)
 		end
 	elseif action == "FireProjectile" and def.kind == "projectile" then
 		if typeof(b) ~= "Vector3" or b.Magnitude < 0.5 then

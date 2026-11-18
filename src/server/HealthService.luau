@@ -84,10 +84,10 @@ local function explode(model: Model, frozen: { BasePart }?, savedVel: Vector3?)
 	local safe = getInfo(model).safeCFrame
 
 	-- 0) 탄 사람 목록을 "먼저" 확보 (좌석을 끄면 로블록스가 바로 내려버려서 목록이 비어버림)
-	local riders: { { hum: Humanoid, seat: BasePart } } = {}
+	local riders: { { hum: Humanoid, seat: BasePart, seatName: string } } = {}
 	for _, seat in model:GetDescendants() do
 		if seat:IsA("Seat") and seat.Occupant then
-			table.insert(riders, { hum = seat.Occupant, seat = seat })
+			table.insert(riders, { hum = seat.Occupant, seat = seat, seatName = seat.Name })
 		end
 	end
 	-- 그 다음 좌석 전부 비활성화: 날아가는 좌석 파편에 다시 앉아버리는 것 방지
@@ -189,6 +189,19 @@ local function explode(model: Model, frozen: { BasePart }?, savedVel: Vector3?)
 			if hum and seat and hum.Health > 0 then
 				task.wait(0.1)
 				seat:Sit(hum)
+			end
+			-- 같이 탔던 동승자(보조수)도 새 차 같은 자리에 다시 태움
+			if newModel then
+				for _, r in riders do
+					local rh = r.hum
+					local sameSeat = newModel:FindFirstChild(r.seatName)
+					if rh ~= hum and rh.Parent and rh.Health > 0 and not rh.SeatPart
+						and sameSeat and sameSeat:IsA("Seat") and not sameSeat.Occupant then
+						local char = rh.Parent :: Model
+						char:PivotTo(sameSeat.CFrame + Vector3.new(0, 3, 0))
+						sameSeat:Sit(rh)
+					end
+				end
 			end
 		end
 	end)

@@ -393,3 +393,20 @@ Players.PlayerRemoving:Connect(function(player)
 	lastDenied[player] = nil
 	lastHazard[player] = nil
 end)
+
+-- 운전수가 없는 차(운전수가 죽음 등): 서버가 물리를 맡고 있으니 서서히 멈추게
+-- (운전 코드가 안 돌아서 그냥 두면 미끄러지듯 계속 굴러감)
+game:GetService("RunService").Heartbeat:Connect(function(dt)
+	local k = math.exp(-GameplayConfig.Vehicle.driverlessBrake * dt)
+	for _, model in vehiclesFolder:GetChildren() do
+		local seat = model:FindFirstChild("DriverSeat")
+		local chassis = model:IsA("Model") and model.PrimaryPart
+		if seat and seat:IsA("Seat") and not seat.Occupant and chassis and not chassis.Anchored
+			and not model:GetAttribute("Exploding") and not model:GetAttribute("Exploded") then
+			local v = chassis.AssemblyLinearVelocity
+			if v.X * v.X + v.Z * v.Z > 0.25 then
+				chassis.AssemblyLinearVelocity = Vector3.new(v.X * k, v.Y, v.Z * k)
+			end
+		end
+	end
+end)
