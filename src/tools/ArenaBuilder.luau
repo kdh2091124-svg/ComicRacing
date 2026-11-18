@@ -8,6 +8,7 @@
 --   층과 층 사이에는 넓은 나선 경사로(갈림길)가 고리길 옆에 나란히 붙어 있어서
 --   고리길을 가로막지 않고, 끊김 없이 위아래로 오갈 수 있음
 --   안쪽 고리에는 구멍을 가로지르는 좁은 다리 하나
+--   바깥 벽 군데군데 뚫림 (밀려나면 바깥으로 떨어짐), 고리마다 천천히 도는 회전 쟁기 (캠핑 방지)
 --
 -- • 기존 Workspace.Map 은 ServerStorage 로 백업 (지운 게 아님), 지형(Terrain)은 비움
 -- • 구멍에 떨어지면 drownY(GameplayConfig.Health) 아래로 내려가서 폭발 = 장외
@@ -39,6 +40,25 @@ local A = {
 	-- 바깥 벽, 바깥 데크
 	wallHeight = 8,
 	deckWidth = 140,
+	-- 바깥 벽 뚫린 곳 (벽/데크 없음 → 밀려나면 바깥으로 떨어져 장외). 경사로 합류 구간은 피해서
+	gaps = {
+		{ centerDeg = 78, widthDeg = 14 },
+		{ centerDeg = 168, widthDeg = 14 },
+		{ centerDeg = 258, widthDeg = 14 },
+		{ centerDeg = 348, widthDeg = 14 },
+	},
+	-- 회전 쟁기 (캠핑 방지): 고리 위를 천천히 돌며 비스듬한 날로 차를 한쪽으로 밀어냄
+	--   ring = 몇 번째 고리, count = 개수, speed = 도는 속도(스터드/초), dir = 1 또는 -1 (도는 방향)
+	--   push = "out" 바깥쪽으로 / "in" 안쪽(구멍)으로
+	plows = {
+		{ ring = 1, count = 2, speed = 22, dir = 1, push = "out", startDeg = 40 },
+		{ ring = 2, count = 2, speed = 18, dir = -1, push = "in", startDeg = 0 },
+		{ ring = 3, count = 1, speed = 14, dir = 1, push = "in", startDeg = 90 },
+	},
+	plowAngleDeg = 35, -- 날이 비스듬한 정도 (0 이면 그냥 미는 막대)
+	plowHeight = 6,
+	plowThick = 4,
+	plowLift = 0.5, -- 바닥에서 띄우는 높이 (바닥에 안 끌리게)
 	-- 다리 (구멍 가로지르기)
 	bridgeWidth = 26,
 	bridgeDeg = 0, -- 다리 방향 (도)
@@ -55,6 +75,8 @@ local A = {
 		bridge = Color3.fromRGB(255, 210, 60),
 		lava = Color3.fromRGB(255, 90, 20),
 		buff = Color3.fromRGB(60, 230, 200),
+		plowA = Color3.fromRGB(255, 200, 30),
+		plowB = Color3.fromRGB(30, 30, 35),
 	},
 }
 
@@ -254,13 +276,88 @@ function ArenaBuilder.Build(options: { keepTerrain: boolean? }?)
 		end
 	end
 
-	-- 5) 바깥 벽 + 바깥 데크
+	-- 5) 바깥 벽 + 바깥 데크 (뚫린 곳은 빼고, 대신 가장자리에 빨강/흰 경고 연석)
 	local outer = rings[1]
+	local function inGap(th: number): boolean
+		local deg = math.deg(th)
+		for _, g in A.gaps do
+			local d = (deg - g.centerDeg + 180) % 360 - 180
+			if math.abs(d) <= g.widthDeg / 2 then
+				return true
+			end
+		end
+		return false
+	end
 	for i = 0, N - 1 do
 		local th = angleOf(i)
+		if inGap(th) then
+			local curb = newPart(fDecor, "GapCurb", Vector3.new(4, 0.2, segLen(outer.r1)), segFrame(outer.r1 - 2, th, outer.top + 0.05), (i % 2 == 0) and A.colors.curbA or A.colors.curbB)
+			curb.CanCollide = false
+			curb.CanQuery = false
+			continue
+		end
 		local wall = newPart(fDecor, "OuterWall", Vector3.new(3, A.wallHeight, segLen(outer.r1 + 3)), segFrame(outer.r1 + 1.5, th, outer.top + A.wallHeight / 2), A.colors.wall)
 		wall.CustomPhysicalProperties = FRICTIONLESS
 		ringBlock(fDecor, outer.r1 + 3, outer.r1 + 3 + A.deckWidth, th, outer.top, A.colors.deck, "Deck").Material = Enum.Material.Grass
+	end
+
+	-- 5-2) 회전 쟁기: 가운데 고정 기둥(보이지 않음)에 경첩(HingeConstraint 모터)으로 연결된 날.
+	--   물리로 도니까 차를 진짜로 밀어냄. 게임 중엔 서버가 물리를 맡음 (ArenaService)
+	local fPlows = folder(map, "Plows")
+	local plowCount = 0
+	for _, spec in A.plows do
+		local ring = rings[spec.ring]
+		assert(ring, "[ArenaBuilder] plows.ring " .. tostring(spec.ring) .. " 고리가 없어요")
+		local pushOut = spec.push == "out"
+		-- 밀려가는 쪽 끝은 여유를 둬서 차가 끼지 않고 날 끝으로 빠져나가게
+		local rIn = ring.r0 + (pushOut and 4 or 2)
+		local rOut = ring.r1 - (pushOut and 12 or 4)
+		local rm = (rIn + rOut) / 2
+		local psi = math.rad(A.plowAngleDeg) * spec.dir * (pushOut and 1 or -1)
+		local len = (rOut - rIn) / math.cos(psi)
+		local y = ring.top + A.plowLift + A.plowHeight / 2
+		local pivotPos = A.center + Vector3.new(0, y, 0)
+		local axisCF = CFrame.fromMatrix(pivotPos, Vector3.yAxis, Vector3.xAxis) -- X 축이 위 = 경첩 회전축
+		local pivot = newPart(fPlows, "PlowPivot_" .. ring.name, Vector3.one * 2, CFrame.new(pivotPos), A.colors.plowB)
+		pivot.Transparency = 1
+		pivot.CanCollide = false
+		pivot.CanQuery = false
+		pivot.CanTouch = false
+		for k = 0, spec.count - 1 do
+			local phi = math.rad(spec.startDeg) + k * 2 * math.pi / spec.count
+			local cf = segFrame(rm, phi, y) * CFrame.Angles(0, psi, 0)
+			local arm = newPart(fPlows, "Plow_" .. ring.name, Vector3.new(len, A.plowHeight, A.plowThick), cf, A.colors.plowA, Enum.Material.Metal)
+			arm.Anchored = false
+			arm.CustomPhysicalProperties = PhysicalProperties.new(100, 0, 0, 100, 1) -- 무겁고 미끄러움
+			arm:SetAttribute("ServerPhysics", true)
+			arm:SetAttribute("Hazard", "Plow")
+			-- 검정 줄무늬 (보기용, 날에 붙임)
+			for s = -2, 2 do
+				local stripe = newPart(arm, "Stripe", Vector3.new(len / 10, A.plowHeight + 0.1, A.plowThick + 0.1), cf * CFrame.new(s * len / 5, 0, 0), A.colors.plowB, Enum.Material.Metal)
+				stripe.Anchored = false
+				stripe.CanCollide = false
+				stripe.Massless = true
+				local w = Instance.new("WeldConstraint")
+				w.Part0, w.Part1 = arm, stripe
+				w.Parent = stripe
+			end
+			local a0 = Instance.new("Attachment")
+			a0.Name = "PlowAxis" .. k
+			a0.CFrame = pivot.CFrame:ToObjectSpace(axisCF)
+			a0.Parent = pivot
+			local a1 = Instance.new("Attachment")
+			a1.Name = "PlowAxis"
+			a1.CFrame = arm.CFrame:ToObjectSpace(axisCF)
+			a1.Parent = arm
+			local hinge = Instance.new("HingeConstraint")
+			hinge.Attachment0, hinge.Attachment1 = a0, a1
+			hinge.ActuatorType = Enum.ActuatorType.Motor
+			hinge.AngularVelocity = spec.speed / rm * spec.dir
+			hinge.MotorMaxTorque = 1e12
+			hinge.MotorMaxAcceleration = 2
+			hinge.Parent = arm
+			plowCount += 1
+		end
 	end
 
 	-- 6) 구멍 가로지르는 다리 (안쪽 고리 높이, 난간 없음 → 밀리면 장외)
@@ -307,7 +404,7 @@ function ArenaBuilder.Build(options: { keepTerrain: boolean? }?)
 			parts += 1
 		end
 	end
-	print(string.format("[ArenaBuilder] 완료: 파트 %d개, 경사로 %d개, 경사로 최대 기울기 %.1f°", parts, #rampList, math.deg(math.atan(maxGrade))))
+	print(string.format("[ArenaBuilder] 완료: 파트 %d개, 경사로 %d개 (최대 기울기 %.1f°), 벽 뚫린 곳 %d개, 회전 쟁기 %d개", parts, #rampList, math.deg(math.atan(maxGrade)), #A.gaps, plowCount))
 	for _, w in warnings do
 		warn("[ArenaBuilder] " .. w)
 	end
