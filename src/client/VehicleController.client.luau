@@ -97,6 +97,8 @@ local session: {
 	topSpeed: number,
 	boost: number,
 	flippedTime: number,
+	chaos: number, -- 0 = 보정 정상, 1 = 통제 불능(물리에 맡김)
+	chaosCalm: number,
 	params: RaycastParams,
 	paramsAge: number,
 }? = nil
@@ -200,12 +202,14 @@ local function step(dt: number)
 	local assist = ClientSettings.Get("DriveAssist") and 1 or 0
 
 	-- 벽 긁기: 비스듬히 박으면 속도를 거의 유지하고 벽을 따라 미끄러짐 (정면 충돌만 멈춤)
-	-- 직전 프레임보다 수평 속도가 갑자기 줄었으면 "벽에 닿음" → 줄어든 방향이 벽 쪽
+	-- 직전 프레임보다 "노면 방향" 속도가 갑자기 줄었으면 "벽에 닿음" → 줄어든 방향이 벽 쪽
+	-- (예전엔 세상 기준 수평 속도로 봐서, 경사에서 꺾거나 경사에 들어설 때 속도가 위아래로 빠진 걸
+	--  벽에 박은 걸로 착각 → 차 머리를 억지로 돌려서 "훅" 꺾였음. 이제 차 바닥 기준 평면으로 봄)
 	do
 		local WS = Physics.WallScrape
 		local pv = s.prevVel
-		local flatPrev = Vector3.new(pv.X, 0, pv.Z)
-		local flatNow = Vector3.new(vel.X, 0, vel.Z)
+		local flatPrev = pv - up * pv:Dot(up)
+		local flatNow = vel - up * vel:Dot(up)
 		local lost = flatPrev - flatNow
 		if flatPrev.Magnitude > WS.minSpeed and lost.Magnitude > WS.minDeltaV
 			and flatNow.Magnitude < flatPrev.Magnitude - WS.minSpeedLoss then
@@ -215,7 +219,7 @@ local function step(dt: number)
 				local normalPart = intoWall * flatPrev:Dot(intoWall)
 				local along = flatPrev - normalPart
 				local newFlat = along * WS.keep - intoWall * normalPart.Magnitude * WS.bounce
-				chassis.AssemblyLinearVelocity = newFlat + Vector3.new(0, vel.Y, 0)
+				chassis.AssemblyLinearVelocity = newFlat + up * vel:Dot(up)
 				-- 박은 충격으로 휙 돌아가는 것도 줄임
 				chassis.AssemblyAngularVelocity = Vector3.new(angVel.X, angVel.Y * WS.yawKeep, angVel.Z)
 				vel = chassis.AssemblyLinearVelocity
@@ -241,7 +245,8 @@ local function step(dt: number)
 	-- 드리프트 중 같은 방향키 = 더 깊게, 반대 방향키 = 얕게 (반대 키를 오래 누르면 반대쪽으로 전환)
 	local D = Physics.Drift
 	local absSpeed = math.abs(fwdSpeed)
-	local flatSpeed = (vel - Vector3.yAxis * vel.Y).Magnitude
+	-- 노면(차 바닥) 기준 속도: 경사에서도 실제 달리는 속도로 조향 한계를 계산
+	local flatSpeed = (vel - up * vel:Dot(up)).Magnitude
 	-- 입력 순서 허용: Space 와 방향키를 inputBuffer 초 안에만 누르면 순서 상관없이 시작
 	local now = os.clock()
 	if input.drift and not s.driftWasDown then
@@ -413,6 +418,17 @@ local function step(dt: number)
 	local recoverGrip = D.recoverMinGrip + (1 - D.recoverMinGrip) * recoverEase
 	tireLatMul *= recoverGrip
 
+	-- 통제 불능 판정: 크게 기울었거나 앞뒤/좌우로 빠르게 도는 중이면 보정을 끄고 물리에 맡김
+	local C = Physics.Chaos
+	if C.enabled then
+		local pitchRollRate = (angVel - up * angVel:Dot(up)).Magnitude
+		if up.Y < math.cos(math.rad(C.tiltDeg)) or pitchRollRate > C.spinRate then
+			s.chaos = 1
+			s.chaosCalm = 0
+		end
+	end
+	local keep = 1 - s.chaos -- 보정을 얼마나 남길지 (통제 불능 = 0)
+
 	for _, w in s.wheels do
 		local origin = (cf * w.att.CFrame).Position
 		local result = workspace:Raycast(origin, -up * rayLen, s.params)
@@ -502,7 +518,7 @@ local function step(dt: number)
 
 			-- 뒤집힘 완화: 힘이 작용하는 높이를 무게중심 쪽으로 끌어올림
 			local lever = contact - com
-			lever -= up * lever:Dot(up) * Physics.antiPitchRoll
+			lever -= up * lever:Dot(up) * Physics.antiPitchRoll * keep
 			totalT += lever:Cross(planarF)
 
 			w.offset = math.clamp(result.Distance - stats.wheelRadius, 0, stats.suspensionRest)
@@ -519,10 +535,22 @@ local function step(dt: number)
 	end
 	s.lastGrounded = s.airTime < Physics.groundGraceTime
 
+	-- 통제 불능에서 복귀: 바퀴로 똑바로 서서 잠깐 버티면 보정이 서서히 돌아옴
+	if s.chaos > 0 then
+		if grounded >= math.min(3, wheelCount) and up.Y > math.cos(math.rad(C.recoverDeg)) then
+			s.chaosCalm += dt
+		else
+			s.chaosCalm = 0
+		end
+		if s.chaosCalm >= C.calmTime then
+			s.chaos = math.max(s.chaos - dt / C.returnTime, 0)
+		end
+	end
+
 	-- 아케이드 보정
 	local tilt = up:Cross(Vector3.yAxis) -- 기울어진 만큼 세우는 방향
 	if grounded > 0 then
-		totalT += tilt * Physics.uprightGround * mass
+		totalT += tilt * Physics.uprightGround * mass * keep
 		totalF += -up * mass * workspace.Gravity * Physics.downforce * speedRatio
 		local yawRate = angVel:Dot(up) -- +면 왼쪽으로 도는 중
 		local inertia = mass * s.inertiaK
@@ -583,7 +611,8 @@ local function step(dt: number)
 		local inertia = mass * s.inertiaK -- 차 크기에 맞춰 힘 조절 (큰 차도 똑같이 반응)
 		local w = Physics.airLevelSpeed
 		local pitchRoll = angVel - Vector3.yAxis * angVel:Dot(Vector3.yAxis)
-		totalT += (tilt * w * w - pitchRoll * 2 * Physics.airLevelDampingRatio * w) * inertia
+		-- 통제 불능이면 수평 맞춤 없음 → 진짜로 구르며 떨어짐 (운빨)
+		totalT += (tilt * w * w - pitchRoll * 2 * Physics.airLevelDampingRatio * w) * inertia * keep
 
 		-- 방향: A/D 누르면 그쪽으로 돌고, 안 누르면 날아가는 방향을 바라봄
 		local yawRate = angVel:Dot(Vector3.yAxis)
@@ -601,7 +630,7 @@ local function step(dt: number)
 				targetYaw = side * Physics.airHeadingAlign
 			end
 		end
-		totalT += Vector3.yAxis * (targetYaw - yawRate) * Physics.airYawResponse * inertia
+		totalT += Vector3.yAxis * (targetYaw - yawRate) * Physics.airYawResponse * inertia * keep
 	end
 	totalF += -vel * mass * Physics.airDrag
 
@@ -688,8 +717,17 @@ local function step(dt: number)
 		VehicleFX:FireServer("Impact", hitPos, strength)
 	end
 
-	-- 충돌 데미지: 한 프레임 속도 변화가 클수록 (정면 꽈앙 > 착지 > 비스듬히 긁기)
-	local dv = (s.prevVel - vel).Magnitude
+	-- 충돌 데미지: 한 프레임 속도 변화가 클수록 (정면 꽈앙 > 비스듬히 긁기)
+	-- 똑바로 선 채 바퀴로 착지하면 "차 위쪽으로 받쳐 올려진" 충격은 빼고 계산 → 착지는 데미지 없음
+	-- 코박기/옆으로/뒤집혀 떨어지면 충격 방향이 차 위아래와 어긋나서 남는 만큼 데미지
+	local dvVec = s.prevVel - vel
+	if up.Y > math.cos(math.rad(HealthConfig.landingUprightDeg)) then
+		local along = dvVec:Dot(up)
+		if along < 0 then -- 아래로 가던 게 위로 받쳐짐 = 착지
+			dvVec -= up * along
+		end
+	end
+	local dv = dvVec.Magnitude
 	if not teleported and dv > HealthConfig.minImpactSpeed and now - s.lastDamage > 0.2 then
 		s.lastDamage = now
 		local dmg = math.min((dv - HealthConfig.minImpactSpeed) * HealthConfig.damagePerSpeed, HealthConfig.maxPerHit)
@@ -866,6 +904,8 @@ local function startDriving(seat: Seat, hum: Humanoid)
 		topSpeed = 0,
 		boost = 1,
 		flippedTime = 0,
+		chaos = 0,
+		chaosCalm = 0,
 		params = params,
 		paramsAge = 0,
 	}
