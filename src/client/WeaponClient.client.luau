@@ -377,7 +377,7 @@ local function shotFX(char: Model?, weaponId: string?, from: Vector3, to: Vector
 	local right, up = gunAxes(char, dir)
 	if def and def.boltTime then
 		-- 볼트식: 탄피는 쏠 때가 아니라 볼트 당길 때 튐
-		task.delay(def.boltTime * 0.15, function()
+		task.delay(def.boltTime * 0.3, function()
 			spawnShell(char, from - dir * 1.2, right, up, style)
 		end)
 	else
@@ -483,7 +483,7 @@ local function fireInner()
 	if def.boltTime then
 		boltUntil = now + def.boltTime
 		zooming = false
-		task.delay(def.boltTime * 0.15, function()
+		task.delay(def.boltTime * 0.3, function()
 			shake = math.max(shake, 0.12) -- 볼트 "철컥"
 			recoilY += math.rad(0.6)
 		end)

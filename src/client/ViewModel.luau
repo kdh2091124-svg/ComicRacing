@@ -53,6 +53,7 @@ local VM = {
 	coverBounce = 12, -- Cover: 열리고 닫힐 때 덜컹 튕기는 각도
 	-- 리볼버: Cylinder(실린더), Hammer(공이치기), Trigger(방아쇠), CylinderHinge(실린더 여는 경첩 Attachment)
 	cylinderStep = 60, -- 한 발마다 실린더 도는 각도 (6연발 = 60)
+	cylinderSpinK = 260, -- 실린더 도는 스프링 세기 (클수록 빨리 돎, 너무 크면 순식간이라 안 보임)
 	cylinderSwing = 80, -- 장전 때 실린더가 왼쪽으로 열리는 각도
 	hammerCock = 35, -- 쏠 때 공이치기가 젖혀졌다 떨어지는 각도
 	triggerPull = 22, -- 쏠 때 방아쇠 당기는 각도
@@ -151,6 +152,7 @@ local hammerSet: Moving? = nil
 local coverSet: Moving? = nil
 local triggerSet: Moving? = nil
 local cylAngle, cylTarget = 0, 0
+local cylAV = 0 -- 실린더 회전 속도 (스프링)
 local kickZ, kickP, kickR = newSpring(), newSpring(), newSpring()
 local swayX, swayY = newSpring(), newSpring()
 local mouseVel = Vector2.zero
@@ -510,7 +512,7 @@ function ViewModel.Set(weaponId: string)
 	hammerSet = collect({ "Hammer" })
 	coverSet = collect({ "Cover" })
 	triggerSet = collect({ "Trigger" })
-	cylAngle, cylTarget = 0, 0
+	cylAngle, cylTarget, cylAV = 0, 0, 0
 	-- 콜라캔 길이 절반 (포신에 넣을 때)
 	canHalf = 0.35 * modelScale
 	if magSet then
@@ -905,9 +907,9 @@ function ViewModel.Update(cam: Camera, state)
 		local roll = smooth(0.46, 0.52, r) * (1 - smooth(0.8, 0.9, r))
 		cf *= CFrame.Angles(math.rad(4) * roll, 0, math.rad(20) * roll) * CFrame.new(-0.05 * roll, -0.05 * roll, 0)
 		rLift = smooth(0.5, 0.53, r) * (1 - smooth(0.76, 0.785, r))
-		rPull = smooth(0.53, 0.57, r) * (1 - smooth(0.74, 0.765, r))
+		rPull = smooth(0.53, 0.63, r) * (1 - smooth(0.74, 0.765, r)) -- 강하게 뒤로 촥 (후퇴가 보이게 조금 길게)
 		chamberShow = rPull > 0.6
-		if crossed(0.57) then
+		if crossed(0.63) then
 			jolt(0.17, 0.06, -0.1) -- 촥
 		end
 		if crossed(0.77) then
@@ -990,7 +992,7 @@ function ViewModel.Update(cam: Camera, state)
 	local bNow = boltB or 0
 	-- 볼트 당길 때 철컥, 밀어 넣을 때 탁 (스프링 충격)
 	if boltB then
-		if prevBolt < 0.2 and bNow >= 0.2 then
+		if prevBolt < 0.42 and bNow >= 0.42 then
 			jolt(0.12, 0.05, -0.08)
 		end
 		if prevBolt < 0.6 and bNow >= 0.6 then
@@ -1003,9 +1005,9 @@ function ViewModel.Update(cam: Camera, state)
 		-- 볼트식(스나)은 손잡이 들기/내리기 + 총을 크게 굴림, AR 은 그냥 당겼다 놓기 + 살짝 굴림
 		local rollAmt = state.boltAction and 24 or 12
 		local roll = smooth(0, 0.15, b) * (1 - smooth(0.7, 0.9, b))
-		lift = state.boltAction and smooth(0.05, 0.15, b) * (1 - smooth(0.62, 0.72, b)) or 0
-		pull = smooth(0.15, 0.35, b) * (1 - smooth(0.45, 0.62, b))
-		local thud = smooth(0.58, 0.63, b) * (1 - smooth(0.63, 0.75, b)) -- 밀어 넣을 때 탁
+		lift = state.boltAction and smooth(0.05, 0.15, b) * (1 - smooth(0.6, 0.7, b)) or 0
+		pull = smooth(0.15, 0.42, b) * (1 - smooth(0.48, 0.6, b)) -- 천천히 뒤로 당겨서(후퇴가 보이게) 잠깐 멈췄다 밀기
+		local thud = smooth(0.6, 0.64, b) * (1 - smooth(0.64, 0.75, b)) -- 밀어 넣을 때 탁
 		-- 총을 왼쪽으로 굴려서 오른쪽 볼트가 보이게 (예전 반대 방향)
 		cf *= CFrame.Angles(math.rad(4) * roll, 0, math.rad(rollAmt) * roll) * CFrame.new(-0.05 * roll, -0.06 * roll, 0)
 		cf *= CFrame.new(0, 0, -0.05 * thud) * CFrame.Angles(math.rad(-3) * thud, 0, 0)
@@ -1038,9 +1040,9 @@ function ViewModel.Update(cam: Camera, state)
 	-- 스나 볼트 창 덮개: 당기는 순간 확 열리고(덜컹), 다 밀면 닫히며 한 번 더 덜컹
 	if coverSet then
 		local b = boltB or 0
-		local open = boltB and (smooth(0.15, 0.2, b) * (1 - smooth(0.62, 0.66, b))) or 0
+		local open = boltB and (smooth(0.15, 0.22, b) * (1 - smooth(0.6, 0.64, b))) or 0
 		local w1 = math.clamp((b - 0.2) / 0.14, 0, 1) -- 열린 뒤 덜컹
-		local w2 = math.clamp((b - 0.66) / 0.12, 0, 1) -- 닫힌 뒤 덜컹
+		local w2 = math.clamp((b - 0.64) / 0.12, 0, 1) -- 닫힌 뒤 덜컹
 		local bounce = 0
 		if boltB then
 			bounce = -VM.coverBounce * math.sin(w1 * math.pi * 2) * (1 - w1)
@@ -1066,7 +1068,13 @@ function ViewModel.Update(cam: Camera, state)
 			local snapT = math.floor(cylTarget / stepA + 0.5) * stepA
 			cylTarget += (snapT - cylTarget) * math.min(dt * 12, 1)
 		end
-		cylAngle += (cylTarget - cylAngle) * math.min(dt * 30, 1)
+		-- 스프링으로 돌림: 한 칸 착 돌고 살짝 넘쳤다 자리 (너무 빨라서 안 보이던 문제)
+		local stepsN = math.max(math.ceil(dt * 240), 1)
+		for _ = 1, stepsN do
+			local h = dt / stepsN
+			cylAV += (VM.cylinderSpinK * (cylTarget - cylAngle) - 2 * 0.55 * math.sqrt(VM.cylinderSpinK) * cylAV) * h
+			cylAngle += cylAV * h
+		end
 		-- 약실 탄: 쏜 칸은 빈 탄피 색, 장전 중 쏟은 뒤 ~ 스피드로더 꽂기 전엔 비어 있음
 		if refillCyl then
 			cylSpent = { false, false, false, false, false, false } -- 스피드로더로 새 탄 6발
