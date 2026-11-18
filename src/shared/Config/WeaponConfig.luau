@@ -15,6 +15,8 @@ WeaponConfig.Weapons = {
 	{
 		id = "AR",
 		name = "AR",
+		viewLength = 3.6, -- 1인칭에서 보이는 총 길이 (스터드)
+		worldLength = 4.2, -- 다른 사람이 보는 내 손의 총 길이
 		kind = "hitscan",
 		auto = true,
 		fireRate = 13, -- 초당 발사 수
@@ -34,6 +36,8 @@ WeaponConfig.Weapons = {
 	{
 		id = "Sniper",
 		name = "스나이퍼",
+		viewLength = 5.2,
+		worldLength = 6,
 		kind = "hitscan",
 		auto = false,
 		fireRate = 0.8,
@@ -58,6 +62,8 @@ WeaponConfig.Weapons = {
 	{
 		id = "Revolver",
 		name = "리볼버",
+		viewLength = 1.9,
+		worldLength = 2.2,
 		kind = "hitscan",
 		auto = false,
 		fireRate = 2.5,
@@ -77,6 +83,8 @@ WeaponConfig.Weapons = {
 	{
 		id = "ColaCannon",
 		name = "콜라캐논",
+		viewLength = 4,
+		worldLength = 4.6,
 		kind = "projectile",
 		auto = false,
 		fireRate = 1.1,
@@ -115,9 +123,11 @@ WeaponConfig.General = {
 	-- 조준경 그림자 (scopeOverlay 무기). 정확도는 줌 켠 직후(scopeTime)만 영향, 돌리는 건 연출만
 	scopeTurnShade = 0.012, -- 화면을 돌린 만큼 가장자리 그림자 진해짐 (마우스 1픽셀당)
 	scopeSettle = 3.5, -- 돌리기 멈추면 그림자 빠지는 빠르기 (초당)
-	scopeShift = 0.45, -- 휙 돌릴 때 렌즈가 반대로 밀리는 양 (마우스 1픽셀당 화면 픽셀)
+	scopeShift = 0.15, -- 휙 돌릴 때 렌즈가 반대로 밀리는 양 (마우스 1픽셀당 화면 픽셀)
+	scopeShiftMax = 22, -- 렌즈가 밀리는 최대 (픽셀)
+	scopeShiftReturn = 20, -- 렌즈가 제자리로 돌아오는 빠르기
 	mouseSensitivity = 0.0035,
-	zoomSensitivityScale = 0.4, -- 조준 중엔 마우스가 이만큼 느리게
+	zoomSensitivityScale = 0.75, -- 조준 중엔 마우스가 이만큼 느리게 (너무 낮으면 늦게 따라오는 느낌)
 	recoilStiffness = 90, -- 반동 스프링: 클수록 빨리 제자리로
 	recoilDamping = 0.5, -- 0.4~0.6 = 살짝 튕기며 복귀 (쫄깃), 1 = 튕김 없이
 	recoilMax = 16, -- 연사로 쌓이는 반동 최대 (도)

@@ -117,6 +117,14 @@ local function equip(player: Player, char: Model, weaponId: string)
 		return
 	end
 	gun.PrimaryPart = handle :: BasePart
+	-- 무기별 길이(worldLength)에 맞춰 크기 조절 (가장 긴 쪽 기준)
+	if def.worldLength then
+		local _, size = gun:GetBoundingBox()
+		local len = math.max(size.X, size.Y, size.Z)
+		if len > 0.1 then
+			gun:ScaleTo(gun:GetScale() * def.worldLength / len)
+		end
+	end
 	-- 손 끝에 손잡이, 총열은 팔이 뻗는 방향 (모델 받으면 각도 맞춤)
 	gun:PivotTo(hand.CFrame * CFrame.new(0, -hand.Size.Y / 2, 0) * CFrame.Angles(-math.pi / 2, 0, 0))
 	for _, p in gun:GetDescendants() do

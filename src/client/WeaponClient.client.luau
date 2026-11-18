@@ -568,10 +568,10 @@ local function enter(char: Model, vehicle: Model?)
 		if scopeOn then
 			-- 휙 돌리면 렌즈가 반대로 살짝 밀렸다 돌아옴 + 가장자리 그림자 진해짐
 			scopeShift += Vector2.new(-md.X, -md.Y) * G.scopeShift
-			if scopeShift.Magnitude > 70 then
-				scopeShift = scopeShift.Unit * 70
+			if scopeShift.Magnitude > G.scopeShiftMax then
+				scopeShift = scopeShift.Unit * G.scopeShiftMax
 			end
-			scopeShift -= scopeShift * math.min(dt * 8, 1)
+			scopeShift -= scopeShift * math.min(dt * G.scopeShiftReturn, 1)
 			local h = scope.AbsoluteSize.Y
 			-- 줌 켤 때: 렌즈가 작고 그림자 짙음 → 열리며 선명해짐
 			local s = 0.9 * (1 - 0.12 * scopeBlur)

@@ -8,13 +8,14 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local WeaponConfig = require(ReplicatedStorage.Shared.Config.WeaponConfig)
 
 local ViewModel = {}
 
 local VM = {
 	hip = CFrame.new(0.95, -1.05, -2.2), -- 평소 위치 (카메라 기준 오른쪽, 아래, 앞)
 	ads = CFrame.new(0, -0.55, -1.7), -- 우클릭 조준 위치 (가운데)
-	maxLength = 3.6, -- 총이 이보다 길면 이 길이로 줄임
+	maxLength = 3.6, -- 무기에 viewLength 가 없을 때 쓰는 길이
 	grip = 0.32, -- 총 길이 중 오른손이 쥐는 곳 (0 = 개머리판 끝)
 	foregrip = 0.68, -- 왼손이 받치는 곳
 	-- 쏠 때 반동 스프링 (클수록 빨리, damping 낮을수록 더 튕김)
@@ -29,6 +30,11 @@ local VM = {
 	swayDamping = 0.7,
 	adsSpeed = 16,
 	raiseTime = 0.25,
+	-- 총 안의 움직이는 파트 (이름으로 찾음): "Mag" = 탄창, "Bolt" = 볼트 손잡이 (파트 또는 그 이름의 Model/Folder)
+	boltTravel = 0.38, -- 볼트 당길 때 뒤로 가는 거리
+	boltLift = 70, -- 볼트 손잡이 들어 올리는 각도 (도)
+	shotSlide = 0.16, -- 연사 총: 쏠 때마다 볼트가 뒤로 철컥 하는 거리
+	magDrop = 1.2, -- 장전 때 탄창이 빠지는 거리
 	boltAnimPortion = 0.75, -- boltTime 중 볼트 동작이 차지하는 비율 (나머지는 제자리)
 	sleeveColor = Color3.fromRGB(60, 70, 90), -- 팔을 못 가져올 때 대신 쓰는 색
 }
@@ -60,6 +66,11 @@ type ArmSet = { hand: BasePart?, fore: BasePart?, single: BasePart? }
 local rightArm: ArmSet = {}
 local leftArm: ArmSet = {}
 local raiseStart = 0
+local lastKick = 0
+-- 움직이는 파트: 손잡이 기준 원래 위치 + 회전 중심
+type Moving = { parts: { { part: BasePart, rel: CFrame } }, center: Vector3 }
+local magSet: Moving? = nil
+local boltSet: Moving? = nil
 local kickZ, kickP, kickR = newSpring(), newSpring(), newSpring()
 local swayX, swayY = newSpring(), newSpring()
 local adsBlend = 0
@@ -90,8 +101,9 @@ local function placeholderGun(parent: Model)
 		return p
 	end
 	local body = part(Vector3.new(0.35, 0.5, 2.6), CFrame.identity, Color3.fromRGB(35, 35, 40))
-	part(Vector3.new(0.25, 0.6, 0.35), CFrame.new(0, -0.5, -0.2), Color3.fromRGB(25, 25, 28))
+	part(Vector3.new(0.25, 0.6, 0.35), CFrame.new(0, -0.5, -0.2), Color3.fromRGB(25, 25, 28)).Name = "Mag"
 	part(Vector3.new(0.15, 0.2, 0.5), CFrame.new(0, 0.35, 0.3), Color3.fromRGB(25, 25, 28))
+	part(Vector3.new(0.35, 0.12, 0.12), CFrame.new(0.3, 0.12, 0.45), Color3.fromRGB(120, 120, 130)).Name = "Bolt"
 	local muzzle = Instance.new("Attachment")
 	muzzle.Name = "Muzzle"
 	muzzle.Position = Vector3.new(0, 0.05, -1.3)
@@ -215,8 +227,11 @@ function ViewModel.Set(weaponId: string)
 	if mzPos and (mzPos - bbCF.Position):Dot(fwd) < 0 then
 		fwd = -fwd
 	end
-	if len > VM.maxLength then
-		local s = VM.maxLength / len
+	-- 무기별 길이(WeaponConfig.viewLength)에 맞춰 키우거나 줄임
+	local def = WeaponConfig.Get(weaponId)
+	local want = def and def.viewLength or VM.maxLength
+	if math.abs(len - want) > 0.05 then
+		local s = want / len
 		gun:ScaleTo(gun:GetScale() * s)
 		bbCF = gun:GetBoundingBox()
 		len *= s
@@ -227,6 +242,29 @@ function ViewModel.Set(weaponId: string)
 	local grip = CFrame.fromMatrix(stock + fwd * len * VM.grip, fwd:Cross(up), up, -fwd)
 	gripOffset = grip:Inverse() * gun:GetPivot()
 	muzzleLocal = grip:PointToObjectSpace(mzPos or (bbCF.Position + fwd * len / 2))
+	-- 탄창/볼트 파트 기억 (손잡이 기준 위치)
+	local function collect(name: string): Moving?
+		local list = {}
+		local sum = Vector3.zero
+		for _, d in gun:GetDescendants() do
+			if d.Name == name then
+				local parts = d:IsA("BasePart") and { d } or d:GetDescendants()
+				for _, p in parts do
+					if p:IsA("BasePart") then
+						local rel = grip:ToObjectSpace(p.CFrame)
+						table.insert(list, { part = p, rel = rel })
+						sum += rel.Position
+					end
+				end
+			end
+		end
+		if #list == 0 then
+			return nil
+		end
+		return { parts = list, center = sum / #list }
+	end
+	magSet = collect("Mag")
+	boltSet = collect("Bolt")
 
 	local m = Instance.new("Model")
 	m.Name = "ViewModel"
@@ -242,6 +280,7 @@ end
 -- 쏠 때: 스프링에 "탁" 충격 (strength 1 = 한 발 세게, 연사는 작게)
 function ViewModel.Kick(strength: number?)
 	local s = strength or 1
+	lastKick = os.clock()
 	kickZ.v += VM.kickBack * 60 * s
 	kickP.v += VM.kickUp * 60 * s
 	kickR.v += (math.random() * 2 - 1) * VM.kickRoll * 60 * s
@@ -340,10 +379,11 @@ function ViewModel.Update(cam: Camera, state)
 		leftDrop = out
 	end
 	-- 볼트: 굴리기 → 당기기 → 밀기 → 복귀 (boltAnimPortion 안에 빠르게 끝냄)
-	local pull = 0
+	local pull, lift = 0, 0
 	if state.bolt then
 		local b = math.clamp(state.bolt / VM.boltAnimPortion, 0, 1)
 		local roll = smooth(0, 0.15, b) * (1 - smooth(0.7, 0.9, b))
+		lift = smooth(0.05, 0.15, b) * (1 - smooth(0.62, 0.72, b)) -- 손잡이 들기 → (당기고 밀고) → 내리기
 		pull = smooth(0.15, 0.35, b) * (1 - smooth(0.45, 0.62, b))
 		local thud = smooth(0.58, 0.63, b) * (1 - smooth(0.63, 0.75, b)) -- 밀어 넣을 때 탁
 		cf *= CFrame.Angles(math.rad(4) * roll, 0, math.rad(-24) * roll) * CFrame.new(0.05 * roll, -0.06 * roll, 0)
@@ -353,6 +393,24 @@ function ViewModel.Update(cam: Camera, state)
 	local gun = current:FindFirstChild("Gun")
 	if gun and gun:IsA("Model") then
 		gun:PivotTo(cf * gripOffset)
+	end
+	-- 볼트: 손잡이 들고(총열 축으로 회전) 뒤로 당김. 연사 총은 쏠 때마다 뒤로 철컥
+	if boltSet then
+		local slide = VM.boltTravel * pull + VM.shotSlide * math.clamp(1 - (t - lastKick) / 0.06, 0, 1)
+		local c0 = boltSet.center
+		local move = CFrame.new(0, 0, slide) * CFrame.new(c0) * CFrame.Angles(0, 0, math.rad(VM.boltLift) * lift) * CFrame.new(-c0)
+		for _, e in boltSet.parts do
+			e.part.CFrame = cf * move * e.rel
+		end
+	end
+	-- 탄창: 장전 때 아래로 빠졌다(살짝 기울며) 다시 꽂힘
+	if magSet and leftDrop > 0 then
+		local c0 = magSet.center
+		local move = CFrame.new(-0.1 * leftDrop, -VM.magDrop * leftDrop, 0.2 * leftDrop)
+			* CFrame.new(c0) * CFrame.Angles(math.rad(-15) * leftDrop, 0, math.rad(20) * leftDrop) * CFrame.new(-c0)
+		for _, e in magSet.parts do
+			e.part.CFrame = cf * move * e.rel
+		end
 	end
 	-- 손: 오른손 = 손잡이(볼트 땐 뒤로 당김, 손 위로), 왼손 = 총열 받침(장전 땐 아래로 탄창 빼기)
 	local rHand = cf:PointToWorldSpace(Vector3.new(0.05 + 0.25 * pull, -0.25 + 0.35 * pull, 0.15 + 0.55 * pull))

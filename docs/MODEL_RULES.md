@@ -1,3 +1,16 @@
+# 무기 모델 (보조수 총)
+
+`ReplicatedStorage.WeaponModels` 에 무기 id 이름으로 (`AR`, `Sniper`, `Revolver`, `ColaCannon`). Tool 이든 Model 이든 됨. 없으면 상자 총.
+
+| 이름 | 종류 | 설명 |
+|---|---|---|
+| `Muzzle` | 총구 끝의 Attachment (또는 작은 파트) | 총알/섬광이 여기서 나감. 이쪽이 총의 "앞" |
+| `Mag` | 파트, 또는 그 이름의 Model/Folder | 탄창. 1인칭 장전 때 실제로 빠졌다 꽂힘 |
+| `Bolt` | 파트, 또는 그 이름의 Model/Folder | 볼트 손잡이. 1인칭 볼트 때 들고 당겼다 밀림, 연사 총은 쏠 때마다 철컥 |
+
+- 방향: 총의 **가장 긴 쪽 = 총열**. 크기는 아무렇게나 만들어도 됨 → 코드가 `WeaponConfig` 의 `viewLength`(1인칭), `worldLength`(남이 보는 손) 길이에 맞춰 줄이고 키움
+- 움직이는 정도: `src/client/ViewModel.luau` 의 `VM` (`boltTravel`, `boltLift`, `shotSlide`, `magDrop`)
+
 # 아레나 스나이퍼 모델 (선택)
 
 막 위 스나이퍼를 직접 만든 걸로 쓰려면 `ServerStorage.ArenaModels.Sniper` (Model) 에 두고 ArenaBuilder 를 다시 실행.
