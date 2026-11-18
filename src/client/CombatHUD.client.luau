@@ -233,6 +233,60 @@ local function updateOverhead(o: Overhead, model: Model)
 end
 
 ----------------------------------------------------------------------
+-- 3-2) 조준경 반짝임: 다른 보조수가 스나로 조준 중이면 그 사람 머리에 번쩍이는 별
+----------------------------------------------------------------------
+
+local glints: { [Player]: BillboardGui } = {}
+
+local function makeGlint(head: BasePart): BillboardGui
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "ScopeGlint"
+	bb.Size = UDim2.fromScale(5, 5) -- 스터드 단위 (멀어도 보이게 큼)
+	bb.StudsOffsetWorldSpace = Vector3.new(0, 0.3, 0)
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	bb.MaxDistance = 3000
+	bb.Adornee = head
+	bb.Parent = gui
+	local core = newFrame(bb, UDim2.fromScale(0.35, 0.35), UDim2.fromScale(0.5, 0.5), Color3.new(1, 1, 1), Vector2.new(0.5, 0.5))
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(1, 0)
+	corner.Parent = core
+	for _, rot in { 0, 90, 45, -45 } do
+		local ray = newFrame(bb, UDim2.fromScale(rot % 90 == 0 and 1 or 0.6, 0.06), UDim2.fromScale(0.5, 0.5), Color3.fromRGB(200, 240, 255), Vector2.new(0.5, 0.5))
+		ray.Rotation = rot
+	end
+	return bb
+end
+
+local function updateGlints(now: number)
+	local seen = {}
+	for _, p in Players:GetPlayers() do
+		local head = p ~= player and p.Character and p.Character:FindFirstChild("Head")
+		if head and head:IsA("BasePart") and p:GetAttribute("Scoped") == true then
+			seen[p] = true
+			local bb = glints[p]
+			if not bb or bb.Adornee ~= head then
+				if bb then
+					bb:Destroy()
+				end
+				bb = makeGlint(head)
+				glints[p] = bb
+			end
+			-- 반짝반짝 (크기 맥박)
+			local s = 4 + 1.6 * math.abs(math.sin(now * 9))
+			bb.Size = UDim2.fromScale(s, s)
+		end
+	end
+	for p, bb in glints do
+		if not seen[p] then
+			bb:Destroy()
+			glints[p] = nil
+		end
+	end
+end
+
+----------------------------------------------------------------------
 -- 4) 다운 알림 + 부활 카운트다운
 ----------------------------------------------------------------------
 
@@ -338,6 +392,8 @@ RunService.RenderStepped:Connect(function(dt)
 			ar.label.TextTransparency = math.max(ar.t - 0.4, 0) / 0.5
 		end
 	end
+
+	updateGlints(now)
 
 	-- 내 체력
 	local char = player.Character

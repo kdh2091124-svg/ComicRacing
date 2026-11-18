@@ -166,9 +166,23 @@ end
 
 -- 지금 탄 퍼짐 (도): hipSpread 가 있는 무기(스나)는 조준 안 하면 크게, 조준하면 spread.
 -- 나머지는 조준하면 40% 로 줄어듦
+-- 조준(우클릭) 상태: 볼트 당기는 중이면 우클릭을 누르고 있어도 조준 안 됨
+local rmbDown = false
+local zoomStart = 0
+local boltUntil = 0
+local scopedSent = false
+
 local function currentSpread(def): number
 	if def.hipSpread then
-		return zooming and def.spread or def.hipSpread
+		if not zooming then
+			return def.hipSpread
+		end
+		-- 조준 완료 시간: 우클릭 직후엔 아직 튀다가 scopeTime 동안 모임
+		local t = def.scopeTime and def.scopeTime > 0 and (os.clock() - zoomStart) / def.scopeTime or 1
+		if t < 1 then
+			return def.hipSpread + (def.spread - def.hipSpread) * t
+		end
+		return def.spread
 	end
 	return def.spread * (zooming and 0.4 or 1)
 end
@@ -205,8 +219,16 @@ local function shotFX(char: Model?, weaponId: string?, from: Vector3, to: Vector
 	local style = GunFX.Style(weaponId)
 	local dir = (to - from).Magnitude > 0.01 and (to - from).Unit or Vector3.zAxis
 	GunFX.Muzzle(from, dir, style)
+	local def = weaponId and WeaponConfig.Get(weaponId)
 	local right, up = gunAxes(char, dir)
-	GunFX.Shell(from - dir * 1.2, right, up, style)
+	if def and def.boltTime then
+		-- 볼트식: 탄피는 쏠 때가 아니라 볼트 당길 때 튐
+		task.delay(def.boltTime * 0.45, function()
+			GunFX.Shell(muzzlePos(char) or from, right, up, style)
+		end)
+	else
+		GunFX.Shell(from - dir * 1.2, right, up, style)
+	end
 	GunFX.Tracer(from, to, style)
 	if hit then
 		GunFX.Impact(to, normal, GunFX.KindOf(hitInst), weaponId == "Sniper" and 1.6 or 1)
@@ -288,6 +310,15 @@ local function fire()
 	shake = math.max(shake, def.shake or 0.15)
 	fovKick += def.fovKick or 1
 	bloom = math.min(bloom + (def.auto and 0.25 or 0.8), 1)
+	-- 볼트식(스나): 한 발 쏘면 조준 풀리고 볼트 당김 → 그동안 다시 조준 못 함
+	if def.boltTime then
+		boltUntil = now + def.boltTime
+		zooming = false
+		task.delay(def.boltTime * 0.45, function()
+			shake = math.max(shake, 0.12) -- 볼트 "철컥"
+			recoilY += math.rad(0.6)
+		end)
+	end
 end
 
 ----------------------------------------------------------------------
@@ -299,6 +330,7 @@ local function enter(char: Model, vehicle: Model?)
 	gui.Enabled = true
 	holding, zooming = false, false
 	recoilP, recoilY = 0, 0
+	rmbDown, boltUntil = false, 0
 	local look = (vehicle and vehicle.PrimaryPart and vehicle.PrimaryPart.CFrame.LookVector) or Vector3.new(0, 0, -1)
 	yaw = math.atan2(-look.X, -look.Z)
 	pitch = 0
@@ -314,7 +346,7 @@ local function enter(char: Model, vehicle: Model?)
 			holding = true
 			fire()
 		elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
-			zooming = true
+			rmbDown = true
 		elseif input.KeyCode == Enum.KeyCode.R then
 			Remote:FireServer("Reload")
 		else
@@ -332,7 +364,7 @@ local function enter(char: Model, vehicle: Model?)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
 			holding = false
 		elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
-			zooming = false
+			rmbDown = false
 		end
 	end))
 	-- 맨 마지막 순서로 카메라를 잡음 (기본 카메라가 덮어쓰던 문제 → 화면 안 돌아가고 반동도 안 보였음)
@@ -347,6 +379,21 @@ local function enter(char: Model, vehicle: Model?)
 			cam.CameraType = Enum.CameraType.Scriptable -- 다른 코드가 되돌려도 다시 잡음
 		end
 		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+		UserInputService.MouseIconEnabled = false -- 마우스 커서 숨김, 조준점만
+		-- 조준 상태: 우클릭 누름 + 볼트 당기는 중 아님
+		local nowT = os.clock()
+		local wantZoom = rmbDown and nowT >= boltUntil
+		if wantZoom and not zooming then
+			zoomStart = nowT
+		end
+		zooming = wantZoom
+		-- 조준경 반짝임: 스나로 조준 중이면 서버에 알림 → 상대 화면에 반짝
+		local d0 = currentDef()
+		local scoped = zooming and d0 ~= nil and d0.scopeGlint == true
+		if scoped ~= scopedSent then
+			scopedSent = scoped
+			Remote:FireServer("Scope", scoped)
+		end
 		-- 마우스 움직임: 매 프레임 직접 읽음 (가운데 고정 상태에서 확실함)
 		local md = UserInputService:GetMouseDelta()
 		local sens = G.mouseSensitivity * (zooming and G.zoomSensitivityScale or 1)
@@ -380,6 +427,8 @@ local function enter(char: Model, vehicle: Model?)
 		local ammo = player:GetAttribute("Ammo")
 		if player:GetAttribute("Reloading") then
 			ammoText.Text = (def and def.name or "") .. "  장전 중..."
+		elseif nowT < boltUntil then
+			ammoText.Text = (def and def.name or "") .. "  볼트 당기는 중..."
 		else
 			ammoText.Text = string.format("%s  %s / %d", def and def.name or "", tostring(ammo or "-"), def and def.magazine or 0)
 		end
@@ -389,13 +438,18 @@ end
 local function exit()
 	active = false
 	gui.Enabled = false
-	holding, zooming = false, false
+	holding, zooming, rmbDown = false, false, false
+	if scopedSent then
+		scopedSent = false
+		Remote:FireServer("Scope", false)
+	end
 	for _, c in conns do
 		c:Disconnect()
 	end
 	table.clear(conns)
 	RunService:UnbindFromRenderStep(BIND)
 	UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+	UserInputService.MouseIconEnabled = true
 	local cam = workspace.CurrentCamera
 	cam.FieldOfView = DEFAULT_FOV
 	cam.CameraType = Enum.CameraType.Custom

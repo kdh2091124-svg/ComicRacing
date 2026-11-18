@@ -82,6 +82,7 @@ local function equip(player: Player, char: Model, weaponId: string)
 	end
 	states[player] = { weapon = weaponId, ammo = def.magazine, reloadUntil = 0, lastShot = 0 }
 	player:SetAttribute("GunnerWeapon", weaponId)
+	player:SetAttribute("Scoped", false)
 	player:SetAttribute("Ammo", def.magazine)
 	player:SetAttribute("Reloading", false)
 
@@ -163,6 +164,9 @@ local function hookSeat(seat: Instance)
 			end
 			if last.Parent and last.Parent:IsA("Model") then
 				unequip(last.Parent)
+			end
+			if player then
+				player:SetAttribute("Scoped", false)
 			end
 		end
 		last = hum
@@ -416,6 +420,12 @@ Remote.OnServerEvent:Connect(function(player, action, a, b, c)
 				equip(player, char, a)
 			end
 		end
+		return
+	elseif action == "Scope" then
+		-- 스나 조준 중 → 다른 사람 화면에 조준경 반짝임 (CombatHUD)
+		local st = states[player]
+		local def = st and WeaponConfig.Get(st.weapon)
+		player:SetAttribute("Scoped", a == true and gunnerInfo(player) ~= nil and def ~= nil and def.scopeGlint == true)
 		return
 	elseif action == "Reload" then
 		local st = states[player]
