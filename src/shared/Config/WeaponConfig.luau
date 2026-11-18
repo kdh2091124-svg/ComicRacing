@@ -15,8 +15,8 @@ WeaponConfig.Weapons = {
 	{
 		id = "AR",
 		name = "AR",
-		viewLength = 3.6, -- 1인칭에서 보이는 총 길이 (스터드)
-		worldLength = 4.2, -- 다른 사람이 보는 내 손의 총 길이
+		viewLength = 4.6, -- 1인칭에서 보이는 총 길이 (스터드)
+		worldLength = 5.2, -- 다른 사람이 보는 내 손의 총 길이
 		kind = "hitscan",
 		auto = true,
 		fireRate = 13, -- 초당 발사 수
@@ -36,8 +36,8 @@ WeaponConfig.Weapons = {
 	{
 		id = "Sniper",
 		name = "스나이퍼",
-		viewLength = 5.2,
-		worldLength = 6,
+		viewLength = 6.6,
+		worldLength = 7.6,
 		kind = "hitscan",
 		auto = false,
 		fireRate = 0.8,
@@ -62,8 +62,8 @@ WeaponConfig.Weapons = {
 	{
 		id = "Revolver",
 		name = "리볼버",
-		viewLength = 1.9,
-		worldLength = 2.2,
+		viewLength = 2.6,
+		worldLength = 2.9,
 		kind = "hitscan",
 		auto = false,
 		fireRate = 2.5,
@@ -83,8 +83,8 @@ WeaponConfig.Weapons = {
 	{
 		id = "ColaCannon",
 		name = "콜라캐논",
-		viewLength = 4,
-		worldLength = 4.6,
+		viewLength = 5.2,
+		worldLength = 5.9,
 		kind = "projectile",
 		auto = false,
 		fireRate = 1.1,

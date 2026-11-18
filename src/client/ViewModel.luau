@@ -13,7 +13,7 @@ local WeaponConfig = require(ReplicatedStorage.Shared.Config.WeaponConfig)
 local ViewModel = {}
 
 local VM = {
-	hip = CFrame.new(0.95, -1.05, -2.2), -- 평소 위치 (카메라 기준 오른쪽, 아래, 앞)
+	hip = CFrame.new(1.05, -1.2, -2.5), -- 평소 위치 (카메라 기준 오른쪽, 아래, 앞)
 	ads = CFrame.new(0, -0.55, -1.7), -- 우클릭 조준 위치 (가운데)
 	maxLength = 3.6, -- 무기에 viewLength 가 없을 때 쓰는 길이
 	grip = 0.32, -- 총 길이 중 오른손이 쥐는 곳 (0 = 개머리판 끝)
@@ -32,9 +32,15 @@ local VM = {
 	swayStiffness = 150, -- 기본 당기는 힘
 	swayStiffBoost = 5, -- 많이 밀렸을수록 당기는 힘이 (1 + 밀린비율² × 이 값)배 → 멀면 확 빠르게
 	swayDamping = 0.5, -- 0.4~0.6 = 살짝 튕기며 자리 잡음 (쫄깃), 1 = 출렁임 없음
-	adsSpeed = 16,
-	adsDistance = 1.1, -- 총에 "Aim" 표시가 있으면 조준할 때 그 점이 눈앞 이 거리에 정확히 옴
-	raiseTime = 0.25,
+	adsStiffness = 260, -- 조준(우클릭) 들어가는 스프링: 클수록 빠름
+	adsDamping = 0.72, -- 1 보다 작으면 들어가서 살짝 자리 잡음
+	adsDistance = 1.9, -- 총에 "Aim" 표시가 있으면 조준할 때 그 점이 눈앞 이 거리에 옴 (너무 가까우면 총 속에서 보는 느낌)
+	raiseTime = 0.32, -- 꺼낼 때 (끝에서 살짝 넘쳤다가 자리)
+	-- 차 관성: 차가 가속/감속/회전하면 총이 반대로 살짝 밀렸다 돌아옴
+	inertia = 0.0022, -- 카메라 가속도 1 당 밀리는 거리
+	inertiaMax = 0.28,
+	inertiaStiffness = 140,
+	inertiaDamping = 0.55,
 	-- 총 안의 움직이는 파트 (이름으로 찾음, 파트 또는 그 이름의 Model/Folder). 회전 중심 = 파트의 피벗(PivotOffset)
 	-- 거리 값은 "원본 모델 크기" 기준 → 총을 키우거나 줄인 만큼 같이 바뀜 (docs/WeaponRig_README 수치)
 	boltTravel = 0.40, -- Bolt: 볼트 당길 때 뒤로 가는 거리
@@ -124,6 +130,26 @@ local kickZ, kickP, kickR = newSpring(), newSpring(), newSpring()
 local swayX, swayY = newSpring(), newSpring()
 local mouseVel = Vector2.zero
 local adsBlend = 0
+local adsS = newSpring()
+local inX, inY, inZ = newSpring(), newSpring(), newSpring() -- 차 관성
+local lastCamPos: Vector3? = nil -- nil 이면 첫 프레임 (관성 계산 건너뜀)
+local lastCamVel = Vector3.zero -- 직전 프레임 내 몸 속도
+local accSmooth = Vector3.zero
+local prevReload, prevBolt = 0, 0 -- 장전/볼트 "탁" 순간 감지용
+
+-- 끝에서 살짝 넘쳤다가 자리 잡는 곡선 (0→1)
+local function backOut(u: number): number
+	local c = 1.6
+	u -= 1
+	return 1 + (c + 1) * u * u * u + c * u * u
+end
+
+-- 총에 순간 충격 (장전 탁, 볼트 철컥): z = 뒤로, p = 총구 들림, r = 비틀림
+local function jolt(z: number, p: number, r: number)
+	kickZ.v += z * 60
+	kickP.v += p * 60
+	kickR.v += r * 60
+end
 
 local function smooth(a: number, b: number, t: number): number
 	local u = math.clamp((t - a) / (b - a), 0, 1)
@@ -393,6 +419,10 @@ function ViewModel.Set(weaponId: string)
 	raiseStart = os.clock()
 	kickZ, kickP, kickR = newSpring(), newSpring(), newSpring()
 	adsBlend = 0
+	adsS = newSpring()
+	inX, inY, inZ = newSpring(), newSpring(), newSpring()
+	lastCamPos, lastCamVel, accSmooth = nil, Vector3.zero, Vector3.zero
+	prevReload, prevBolt = 0, 0
 end
 
 -- 쏠 때: 스프링에 "탁" 충격 (strength 1 = 한 발 세게, 연사는 작게)
@@ -481,7 +511,27 @@ function ViewModel.Update(cam: Camera, state)
 	if state.hidden then
 		return
 	end
-	adsBlend += ((state.ads and 1 or 0) - adsBlend) * math.min(dt * VM.adsSpeed, 1)
+	-- 조준: 스프링으로 착 들어가서 살짝 자리 잡음
+	stepSpring(adsS, VM.adsStiffness, VM.adsDamping, dt, state.ads and 1 or 0)
+	adsBlend = math.clamp(adsS.x, -0.05, 1.08)
+	-- 차 관성: 내 몸(=탄 차) 가속도의 반대로 총이 밀림. 화면 흔들림에 안 흔들리게 몸 속도로 계산
+	local root = Players.LocalPlayer.Character and Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	local velW = (root and root:IsA("BasePart")) and root.AssemblyLinearVelocity or Vector3.zero
+	if lastCamPos and dt > 0 then
+		local rawAcc = (velW - lastCamVel) / dt
+		lastCamVel = velW
+		accSmooth = accSmooth:Lerp(rawAcc, math.min(dt * 12, 1)) -- 물리 떨림 거르기
+		local acc = cam.CFrame:VectorToObjectSpace(accSmooth)
+		local k = VM.inertia * (1 - adsBlend * 0.6)
+		local function tgt(a: number): number
+			return math.clamp(-a * k, -VM.inertiaMax, VM.inertiaMax)
+		end
+		stepSpring(inX, VM.inertiaStiffness, VM.inertiaDamping, dt, tgt(acc.X))
+		stepSpring(inY, VM.inertiaStiffness, VM.inertiaDamping, dt, tgt(acc.Y))
+		stepSpring(inZ, VM.inertiaStiffness, VM.inertiaDamping, dt, tgt(acc.Z))
+	end
+	lastCamPos = velW -- (첫 프레임 표시용)
+	lastCamVel = velW
 	-- 스프링들
 	local md: Vector2 = state.mouseDelta
 	-- 화면을 돌린 반대쪽으로 팔이 살짝 늦게 따라옴
@@ -496,7 +546,7 @@ function ViewModel.Update(cam: Camera, state)
 	stepSpring(kickR, VM.kickStiffness * 0.8, VM.kickDamping, dt)
 	local t = os.clock()
 	local breathe = math.sin(t * 1.7) * 0.01 * (1 - adsBlend * 0.8)
-	local raise = 1 - (1 - math.clamp((t - raiseStart) / VM.raiseTime, 0, 1)) ^ 3
+	local raise = backOut(math.clamp((t - raiseStart) / VM.raiseTime, 0, 1)) -- 꺼낼 때 살짝 넘쳤다 자리
 
 	-- 조준 위치: "Aim" 표시가 있으면 그 점이 화면 정중앙(눈앞)에 오게, 없으면 VM.ads
 	local adsCF = aimLocal and CFrame.new(-aimLocal.X, -aimLocal.Y, -VM.adsDistance - aimLocal.Z) or VM.ads
@@ -506,25 +556,46 @@ function ViewModel.Update(cam: Camera, state)
 	local sy = soft(swayY.x, VM.swayMax)
 	local pivot = CFrame.new(VM.shoulderPivot:Lerp(Vector3.new(0, -0.6, 0.4), adsBlend))
 	local swayCF = pivot * CFrame.Angles(sy, sx, sx * VM.swayRoll) * pivot:Inverse()
-	local cf = cam.CFrame * swayCF * base
-		* CFrame.new(0, -0.8 * (1 - raise) + breathe, 0) * CFrame.Angles(math.rad(-30) * (1 - raise), 0, 0)
+	local inertiaCF = CFrame.new(inX.x, inY.x, inZ.x) * CFrame.Angles(inY.x * 0.25, 0, -inX.x * 0.6)
+	local cf = cam.CFrame * inertiaCF * swayCF * base
+		* CFrame.new(0, -0.9 * (1 - raise) + breathe, 0) * CFrame.Angles(math.rad(-35) * (1 - raise), math.rad(8) * (1 - raise), 0)
 		* CFrame.new(0, 0, math.clamp(kickZ.x, -0.2, 0.6)) * CFrame.Angles(math.clamp(kickP.x, -0.2, 0.5), 0, kickR.x)
 
 	-- 장전: 기울이기 → 탄창 빼기 → 꽂기 → 탁 → 복귀
 	local leftDrop = 0
+	local r = state.reload or 0
 	if state.reload then
-		local r = state.reload
-		local tilt = smooth(0, 0.12, r) * (1 - smooth(0.85, 1, r))
-		local out = smooth(0.15, 0.32, r) * (1 - smooth(0.45, 0.62, r))
-		local slap = smooth(0.62, 0.68, r) * (1 - smooth(0.68, 0.8, r))
-		cf *= CFrame.new(0, -0.25 * tilt, 0) * CFrame.Angles(math.rad(-12) * tilt, math.rad(10) * tilt, math.rad(32) * tilt)
-		cf *= CFrame.new(0, 0.06 * slap, 0) * CFrame.Angles(math.rad(-4) * slap, 0, 0)
+		-- 비틀며 들기(살짝 넘침) → 탄창 확 빼기 → 꽂기 → 탁(충격) → 제자리(살짝 넘침)
+		local tiltIn = backOut(math.clamp(r / 0.14, 0, 1))
+		local tiltOut = 1 - backOut(math.clamp((r - 0.82) / 0.18, 0, 1))
+		local tilt = math.min(tiltIn, tiltOut)
+		local out = smooth(0.14, 0.26, r) * (1 - smooth(0.46, 0.6, r))
+		cf *= CFrame.new(0.08 * tilt, -0.2 * tilt, 0.05 * tilt) * CFrame.Angles(math.rad(-8) * tilt, math.rad(18) * tilt, math.rad(38) * tilt)
 		leftDrop = out
+		-- 탄창 뺄 때 툭, 꽂을 때 탁 (스프링 충격)
+		if prevReload < 0.16 and r >= 0.16 then
+			jolt(0, -0.08, 0.05)
+		end
+		if prevReload < 0.6 and r >= 0.6 then
+			jolt(0.18, 0.14, -0.06)
+		end
 	end
+	prevReload = r
 	-- 볼트: 굴리기 → 당기기 → 밀기 → 복귀 (boltAnimPortion 안에 빠르게 끝냄)
 	local pull, lift = 0, 0
+	local bNow = state.bolt and math.clamp(state.bolt / VM.boltAnimPortion, 0, 1) or 0
+	-- 볼트 당길 때 철컥, 밀어 넣을 때 탁 (스프링 충격)
 	if state.bolt then
-		local b = math.clamp(state.bolt / VM.boltAnimPortion, 0, 1)
+		if prevBolt < 0.2 and bNow >= 0.2 then
+			jolt(0.12, 0.05, 0.08)
+		end
+		if prevBolt < 0.6 and bNow >= 0.6 then
+			jolt(-0.1, -0.06, -0.06)
+		end
+	end
+	prevBolt = bNow
+	if state.bolt then
+		local b = bNow
 		local roll = smooth(0, 0.15, b) * (1 - smooth(0.7, 0.9, b))
 		lift = smooth(0.05, 0.15, b) * (1 - smooth(0.62, 0.72, b)) -- 손잡이 들기 → (당기고 밀고) → 내리기
 		pull = smooth(0.15, 0.35, b) * (1 - smooth(0.45, 0.62, b))

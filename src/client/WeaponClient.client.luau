@@ -599,7 +599,7 @@ local function enter(char: Model, vehicle: Model?)
 		updateScopeBlur(def, dt, md.Magnitude)
 		local scopeOn = zooming and def ~= nil and def.scopeOverlay == true
 		scope.Visible = scopeOn
-		cross.Visible = not scopeOn
+		cross.Visible = not zooming -- 조준(우클릭) 중엔 십자선 없음 (가늠자/스코프로 조준)
 		if scopeOn then
 			-- 휙 돌리면 렌즈가 반대로 살짝 밀렸다 돌아옴 + 가장자리 그림자 진해짐
 			scopeShift += Vector2.new(-md.X, -md.Y) * G.scopeShift
