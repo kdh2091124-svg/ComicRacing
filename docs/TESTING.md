@@ -17,6 +17,7 @@ Studio 명령줄 (기존 Workspace.Map 은 ServerStorage 로 백업, 지형은 �
 require(game.ServerStorage.Tools.ArenaBuilder:Clone()).Build()
 ```
 - 고리 3층(바깥 높음 → 안쪽 낮음) + 층 사이 경사면 + 넓은 나선 경사로 8개(폭 100) + 구멍 가로지르는 다리 + 가운데 장외 구멍
+- 난간 없음 (경사로에서도 언제든 박아서 아래로 떨굴 수 있음). 다시 켜려면 `A.rampRails = true`
 - 크기/높이/경사로 위치/기울기는 `src/tools/ArenaBuilder.luau` 맨 위 `A` 표에서만 고치면 됨
 - 하늘색 공(BuffSpawn) = 나중에 버프 아이템이 나올 자리 표시 (아직 먹어도 아무 일 없음)
 - 바깥 가장자리는 벽 없이 전부 뚫림(빨강/흰 연석) = 밀려나면 바깥으로 떨어져 장외. 벽을 다시 세우려면 `A.outerOpen = false` (그때는 `A.gaps` 자리만 뚫림)

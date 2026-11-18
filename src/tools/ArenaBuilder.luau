@@ -64,7 +64,8 @@ local A = {
 	-- 다리 (구멍 가로지르기)
 	bridgeWidth = 26,
 	bridgeDeg = 0, -- 다리 방향 (도)
-	railWallHeight = 7, -- 경사로 가장자리 투명 벽 높이
+	rampRails = false, -- 경사로 노란 난간 (false = 없음 → 언제든 박아서 넘길 수 있음)
+	railWallHeight = 7, -- 난간 켰을 때 뒤의 투명 벽 높이
 	colors = {
 		ring = { Color3.fromRGB(70, 72, 88), Color3.fromRGB(78, 76, 96), Color3.fromRGB(86, 74, 96) },
 		slope = Color3.fromRGB(240, 170, 90),
@@ -249,7 +250,7 @@ function ArenaBuilder.Build(options: { keepTerrain: boolean? }?)
 			local cf = segFrame(rm, th, h) * CFrame.Angles(beta, 0, 0)
 			newPart(fRamps, "Ramp", Vector3.new(r1 - r0, depth, segLen(r1)), cf * CFrame.new(0, -depth / 2, 0), A.colors.ramp, Enum.Material.Concrete)
 			-- 안쪽 가장자리: 아래 고리보다 높은 곳만 난간 (끝 합류 구간은 열림)
-			if h - lo > 1.5 then
+			if A.rampRails and h - lo > 1.5 then
 				local railCF = segFrame(r0 + 0.8, th, h) * CFrame.Angles(beta, 0, 0)
 				local rail = newPart(fRails, "Rail", Vector3.new(1.2, 2.5, segLen(r0 + 1)), railCF * CFrame.new(0, 1.25, 0), A.colors.rail)
 				rail.CanCollide = false
@@ -259,13 +260,15 @@ function ArenaBuilder.Build(options: { keepTerrain: boolean? }?)
 			end
 		end
 		-- 시작 모서리 (위 고리 높이에서 경사면 쪽으로 떨어지는 곳): 가로 난간
-		local th0 = angleOf(R.s) - DT / 2
-		local edgeCF = segFrame(rm, th0, hi)
-		local edge = newPart(fRails, "Rail", Vector3.new(r1 - r0, 2.5, 1.2), edgeCF * CFrame.new(0, 1.25, 0), A.colors.rail)
-		edge.CanCollide = false
-		local edgeWall = newPart(fRails, "RailWall", Vector3.new(r1 - r0, A.railWallHeight, 1), edgeCF * CFrame.new(0, A.railWallHeight / 2, 0), A.colors.rail)
-		edgeWall.Transparency = 1
-		edgeWall.CustomPhysicalProperties = FRICTIONLESS
+		if A.rampRails then
+			local th0 = angleOf(R.s) - DT / 2
+			local edgeCF = segFrame(rm, th0, hi)
+			local edge = newPart(fRails, "Rail", Vector3.new(r1 - r0, 2.5, 1.2), edgeCF * CFrame.new(0, 1.25, 0), A.colors.rail)
+			edge.CanCollide = false
+			local edgeWall = newPart(fRails, "RailWall", Vector3.new(r1 - r0, A.railWallHeight, 1), edgeCF * CFrame.new(0, A.railWallHeight / 2, 0), A.colors.rail)
+			edgeWall.Transparency = 1
+			edgeWall.CustomPhysicalProperties = FRICTIONLESS
+		end
 		-- 버프 아이템 자리 (아이템 기능은 아직 없음, 위치 표시만)
 		for _, spot in { { R.upper, R.s + 2 }, { R.lower, R.s + R.n - 3 } } do
 			local ring, idx = spot[1], spot[2]
