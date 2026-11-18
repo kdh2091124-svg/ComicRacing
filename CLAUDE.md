@@ -4,6 +4,7 @@
 - 개발자 확정 사항: `docs/DECISIONS.md` (설계 문서보다 우선)
 - 차 모델 규칙: `docs/MODEL_RULES.md`
 - 테스트 방법: `docs/TESTING.md`
+- 다른 컴퓨터/플레이스에서 이어서 하기: `docs/SETUP_ANOTHER_PC.md`
 
 ## 구조
 - Rojo는 **코드만** 관리한다 (`src/`). Workspace(맵), `ReplicatedStorage.VehicleModels`(차 모델)는 Studio에서 직접 관리 → Rojo 프로젝트 파일에 Workspace를 절대 넣지 않는다.
