@@ -1,6 +1,7 @@
 -- 도로 생성기: 부드러운 곡선 도로망을 깐다 (구조물 없이 길만). Studio 명령줄에서 실행:
+-- (:Clone() 을 꼭 붙이기 — 안 붙이면 명령줄이 예전 코드를 기억해서 수정이 반영 안 됨)
 --
---   require(game.ServerStorage.Tools.RoadBuilder).Build()
+--   require(game.ServerStorage.Tools.RoadBuilder:Clone()).Build()
 --
 -- • 기존 Workspace.Map 은 지우지 않고 ServerStorage.Map_backup_시간 으로 옮겨 둠 (Ctrl+Z 가능)
 -- • 길 모양은 아래 ROUTES 의 점들만 고치면 됨: { x, y(높이), z, bank = 기울기(도, +면 오른쪽이 낮음), bridge = true }

@@ -1,9 +1,9 @@
 -- 그레이박스(회색 뼈대) 오픈월드 생성기. 게임 실행 중엔 안 돌고, Studio 명령줄에서 한 번 실행한다.
 --
---   require(game.ServerStorage.Tools.MapBuilder).Build()
+--   require(game.ServerStorage.Tools.MapBuilder:Clone()).Build()
 --
 -- • Workspace.Map 이 이미 있으면 아무것도 안 한다 (직접 고친 맵 보호).
---   정말 새로 만들려면: require(game.ServerStorage.Tools.MapBuilder).Build({ overwrite = true })
+--   정말 새로 만들려면: require(game.ServerStorage.Tools.MapBuilder:Clone()).Build({ overwrite = true })
 --   → 기존 Map 은 지우지 않고 "Map_backup_시간" 으로 이름만 바꿔 둔다.
 -- • 만든 뒤에는 Ctrl+Z 로 되돌릴 수 있다.
 -- • 위에서 아래로: 설산(북, 높음) → MTB 숲 → 언덕 주택가/와이너리 → 꼬인 도심 다운힐 → 평지 도심/스폰 → 항구(남, 낮음)
@@ -578,8 +578,8 @@ local function addTrialExtras(map: Instance)
 end
 
 -- 코스(출발 게이트, 초록 체크포인트 벽, 코너 표지판)를 맵에서 치우기 / 다시 꺼내기 (Studio 명령줄)
---   require(game.ServerStorage.Tools.MapBuilder).HideCourses()
---   require(game.ServerStorage.Tools.MapBuilder).ShowCourses()
+--   require(game.ServerStorage.Tools.MapBuilder:Clone()).HideCourses()
+--   require(game.ServerStorage.Tools.MapBuilder:Clone()).ShowCourses()
 -- 지우지 않고 ServerStorage.HiddenCourses 로 옮겨만 둠 (레이스 만들 때 다시 꺼냄)
 function MapBuilder.HideCourses()
 	local map = workspace:FindFirstChild("Map")
@@ -614,7 +614,7 @@ function MapBuilder.ShowCourses()
 end
 
 -- 이미 만든 맵에 트라이얼 요소만 덧붙이기 (Studio 명령줄):
---   require(game.ServerStorage.Tools.MapBuilder).AddTrialExtras()
+--   require(game.ServerStorage.Tools.MapBuilder:Clone()).AddTrialExtras()
 function MapBuilder.AddTrialExtras()
 	local map = workspace:FindFirstChild("Map")
 	if not map then

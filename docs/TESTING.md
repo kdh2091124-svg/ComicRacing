@@ -6,7 +6,7 @@
 3. 터미널에서 이 폴더로 이동해 `rojo serve` 를 실행한다. Studio의 Rojo 플러그인에서 **Connect** 를 누른다.
 4. Studio 명령줄(View → Command Bar)에 아래를 입력한다:
    ```lua
-   require(game.ServerStorage.Tools.MapBuilder).Build()
+   require(game.ServerStorage.Tools.MapBuilder:Clone()).Build()
    ```
    그러면 `Workspace.Map` 이 생긴다. 이제 직접 고쳐도 되고, Rojo는 맵을 건드리지 않는다.
 5. 꼭 **저장하거나 게시**한다. 맵은 Git이 아니라 플레이스 파일에 저장되기 때문이다.
@@ -14,7 +14,7 @@
 ## 오픈월드 도로 (새 맵)
 Studio 명령줄 (기존 Workspace.Map 은 ServerStorage 로 백업됨):
 ```lua
-require(game.ServerStorage.Tools.RoadBuilder).Build()
+require(game.ServerStorage.Tools.RoadBuilder:Clone()).Build()
 ```
 - 길 모양은 `src/tools/RoadBuilder.luau` 의 `ROUTES` 점만 고치면 됨 (다시 Build 하면 반영)
 - 직접 손볼 땐 Workspace.Map.Roads 안의 조각을 움직이면 됨
@@ -33,7 +33,7 @@ require(game.ServerStorage.Tools.RoadBuilder).Build()
 ## 트라이얼 확인할 것
 이미 맵을 만들었다면 명령줄에서 한 번 실행 (게이트, 구간 이름, 코너 표지판만 덧붙임. 기존 맵은 안 건드림):
 ```lua
-require(game.ServerStorage.Tools.MapBuilder).AddTrialExtras()
+require(game.ServerStorage.Tools.MapBuilder:Clone()).AddTrialExtras()
 ```
 - [ ] 코스 출발선 노란 게이트 "TIME TRIAL · 코스이름" 이 보이는지 (도심 블록 서킷: 도심 남쪽 블록 길)
 - [ ] 차 타고 게이트를 앞 방향으로 지나가면 화면 위에 타이머가 시작되는지
