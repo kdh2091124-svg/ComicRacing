@@ -299,6 +299,9 @@ local function currentSpread(def): number
 		-- 흐린 만큼 튐, 완전히 선명하면 spread(=0) → 똑바로
 		return def.spread + (def.hipSpread - def.spread) * scopeBlur
 	end
+	if zooming and def.zoomSpread ~= nil then
+		return def.zoomSpread -- 조준하면 퍼짐 고정값 (리볼버 0)
+	end
 	return def.spread * (zooming and 0.4 or 1)
 end
 
@@ -489,6 +492,7 @@ end
 
 -- 쏘기 안전장치: 연출 코드에서 에러가 나도 다음 발은 계속 쏠 수 있게 + 출력창에 한 번 알림
 local fireWarned = false
+local crossGap = 10 -- 지금 조준점 간격 (부드럽게 바뀜)
 local vmWarned = false
 local function fire()
 	local ok, err = pcall(fireInner)
@@ -615,7 +619,9 @@ local function enter(char: Model, vehicle: Model?)
 		updateScopeBlur(def, dt, md.Magnitude)
 		local scopeOn = zooming and def ~= nil and def.scopeOverlay == true
 		scope.Visible = scopeOn
-		cross.Visible = not zooming -- 조준(우클릭) 중엔 십자선 없음 (가늠자/스코프로 조준)
+		-- 조준(우클릭) 중엔 십자선 없음 (가늠자/스코프로 조준). adsDot 무기(리볼버)는 점으로 줄어든 조준점만
+		local dotMode = zooming and def ~= nil and def.adsDot == true
+		cross.Visible = not zooming or dotMode
 		if scopeOn then
 			-- 휙 돌리면 렌즈가 반대로 살짝 밀렸다 돌아옴 + 가장자리 그림자 진해짐
 			scopeShift += Vector2.new(-md.X, -md.Y) * G.scopeShift
@@ -649,7 +655,7 @@ local function enter(char: Model, vehicle: Model?)
 				reloadStart = nowT
 				-- 리볼버: 실린더가 열리면 빈 탄피 6개가 쏟아짐
 				if ViewModel.CylinderPosition() then
-					task.delay(def.reloadTime * 0.3, function()
+					task.delay(def.reloadTime * 0.18, function() -- 총구 들어서 쏟는 순간
 						local p = ViewModel.CylinderPosition()
 						if p then
 							for _ = 1, 6 do
@@ -683,7 +689,9 @@ local function enter(char: Model, vehicle: Model?)
 			local half = math.rad(cam.FieldOfView / 2)
 			spreadPx = math.tan(math.rad(currentSpread(def))) / math.tan(half) * cam.ViewportSize.Y / 2
 		end
-		local gap = 6 + math.min(spreadPx, 220) + bloom * 8
+		-- 리볼버 조준(dotMode): 십자선이 가운데로 스르륵 모여서 점만 남음
+		local targetGap = dotMode and 0 or (6 + math.min(spreadPx, 220) + bloom * 8)
+		crossGap += (targetGap - crossGap) * math.min(dt * 16, 1)
 		-- 조준점도 총이 튄 만큼 위로/옆으로 (총알이 가는 곳 그대로)
 		if G.firstPerson then
 			local kp, ky = ViewModel.AimKick()
@@ -692,7 +700,8 @@ local function enter(char: Model, vehicle: Model?)
 		end
 		for i, arm in crossArms do
 			local o = CROSS_DIRS[i]
-			arm.Position = UDim2.new(0.5, o[1] * gap, 0.5, o[2] * gap)
+			arm.Position = UDim2.new(0.5, o[1] * crossGap, 0.5, o[2] * crossGap)
+			arm.Visible = crossGap > 2.5
 		end
 		if holding and def and def.auto then
 			fire()

@@ -59,27 +59,49 @@ local function burst(pos: Vector3, count: number, color: ColorSequence, speed: N
 	Debris:AddItem(att, life.Max + 0.2)
 end
 
--- 총구 섬광: 번쩍 빛 + 별 모양 + 앞으로 튀는 불꽃
-function GunFX.Muzzle(pos: Vector3, dir: Vector3, style)
-	local s = style.flash
-	local cf = CFrame.lookAt(pos, pos + dir)
-	local a = part(Vector3.new(0.25, 0.25, 1.6) * s, cf * CFrame.new(0, 0, -0.6 * s), style.color)
-	local b = part(Vector3.new(1.1, 0.12, 0.12) * s, cf * CFrame.Angles(0, 0, math.rad(math.random(0, 90))), style.color)
-	local c = part(Vector3.new(1.1, 0.12, 0.12) * s, cf * CFrame.Angles(0, 0, math.rad(math.random(0, 90)) + math.pi / 2), Color3.new(1, 1, 1))
-	local core = part(Vector3.one * 0.5 * s, cf, Color3.new(1, 1, 0.85))
-	core.Shape = Enum.PartType.Ball
-	local light = Instance.new("PointLight")
-	light.Color = style.color
-	light.Range = 10 * s
-	light.Brightness = 4
-	light.Parent = core
-	for _, p in { a, b, c, core } do
-		Debris:AddItem(p, 0.05)
-	end
-	burst(pos, math.floor(6 * s), ColorSequence.new(style.color, Color3.new(1, 1, 1)), NumberRange.new(30, 60), 0.25 * s, NumberRange.new(0.05, 0.15), dir, 18)
+-- 연기 한 덩이: 반투명 회색 공이 커지며 위로 떠오르다 사라짐
+local function smokePuff(pos: Vector3, size: number, life: number, drift: Vector3?)
+	local p = part(Vector3.one * size * 0.4, CFrame.new(pos), Color3.fromRGB(200, 200, 205), Enum.Material.SmoothPlastic)
+	p.Shape = Enum.PartType.Ball
+	p.Transparency = 0.55
+	TweenService:Create(p, TweenInfo.new(life, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.one * size,
+		Transparency = 1,
+		CFrame = CFrame.new(pos + (drift or Vector3.new(0, 1.2, 0))),
+	}):Play()
+	Debris:AddItem(p, life + 0.05)
 end
 
--- 총알 줄기: 굵게 번쩍 → 가늘어지며 사라짐
+-- 총구 섬광: 앞으로 뻗는 불꽃 꽃잎(4장) + 밝은 코어(커졌다 사라짐) + 빛 + 불꽃 파티클 + 남는 연기
+function GunFX.Muzzle(pos: Vector3, dir: Vector3, style)
+	local s = style.flash
+	local cf = CFrame.lookAt(pos, pos + dir) * CFrame.Angles(0, 0, math.random() * math.pi)
+	-- 앞으로 뻗는 원뿔 느낌의 불꽃 (가운데 길게 + 비스듬히 4장)
+	local flames = { part(Vector3.new(0.3, 0.3, 2.0) * s, cf * CFrame.new(0, 0, -0.9 * s), Color3.fromRGB(255, 240, 200)) }
+	for k = 0, 3 do
+		local a = k * math.pi / 2
+		local petal = part(Vector3.new(0.16, 0.16, 1.1) * s,
+			cf * CFrame.Angles(0, 0, a) * CFrame.Angles(math.rad(28), 0, 0) * CFrame.new(0, 0, -0.5 * s), style.color)
+		table.insert(flames, petal)
+	end
+	for _, f in flames do
+		TweenService:Create(f, TweenInfo.new(0.06), { Transparency = 1, Size = f.Size * Vector3.new(0.3, 0.3, 1.3) }):Play()
+		Debris:AddItem(f, 0.07)
+	end
+	local core = part(Vector3.one * 0.35 * s, cf, Color3.new(1, 1, 0.9))
+	core.Shape = Enum.PartType.Ball
+	TweenService:Create(core, TweenInfo.new(0.06), { Size = Vector3.one * 0.9 * s, Transparency = 1 }):Play()
+	local light = Instance.new("PointLight")
+	light.Color = style.color
+	light.Range = 12 * s
+	light.Brightness = 5
+	light.Parent = core
+	Debris:AddItem(core, 0.07)
+	burst(pos, math.floor(8 * s), ColorSequence.new(Color3.new(1, 1, 0.8), style.color), NumberRange.new(35, 70), 0.22 * s, NumberRange.new(0.05, 0.14), dir, 15)
+	smokePuff(pos + dir * 0.4 * s, 1.2 * s, 0.45, dir * 1.2 + Vector3.new(0, 0.8, 0))
+end
+
+-- 총알 줄기: 가는 밝은 코어 + 은은한 빛 + 끝쪽 탄두(밝은 머리)가 날아가는 느낌으로 사라짐
 function GunFX.Tracer(from: Vector3, to: Vector3, style)
 	if style.width <= 0 then
 		return
@@ -89,14 +111,21 @@ function GunFX.Tracer(from: Vector3, to: Vector3, style)
 		return
 	end
 	local mid = CFrame.lookAt((from + to) / 2, to)
-	local p = part(Vector3.new(style.width, style.width, d), mid, style.color)
-	local glow = part(Vector3.new(style.width * 2.5, style.width * 2.5, d), mid, style.color)
-	glow.Transparency = 0.75
+	local core = part(Vector3.new(style.width * 0.5, style.width * 0.5, d), mid, Color3.new(1, 1, 0.95))
+	local glow = part(Vector3.new(style.width * 2.2, style.width * 2.2, d), mid, style.color)
+	glow.Transparency = 0.7
 	local info = TweenInfo.new(style.life, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-	TweenService:Create(p, info, { Size = Vector3.new(0.02, 0.02, d), Transparency = 1 }):Play()
-	TweenService:Create(glow, info, { Size = Vector3.new(0.05, 0.05, d), Transparency = 1 }):Play()
-	Debris:AddItem(p, style.life + 0.05)
+	TweenService:Create(core, info, { Size = Vector3.new(0.02, 0.02, d), Transparency = 1 }):Play()
+	TweenService:Create(glow, info, { Size = Vector3.new(0.04, 0.04, d), Transparency = 1 }):Play()
+	Debris:AddItem(core, style.life + 0.05)
 	Debris:AddItem(glow, style.life + 0.05)
+	-- 탄두 머리: 총구 → 맞은 자리로 빠르게 날아감
+	local headLen = math.min(d * 0.25, 6)
+	local dirU = (to - from).Unit
+	local head = part(Vector3.new(style.width * 1.2, style.width * 1.2, headLen), CFrame.lookAt(from + dirU * headLen / 2, to), Color3.new(1, 1, 1))
+	local travel = math.clamp(d / 1500, 0.03, 0.12)
+	TweenService:Create(head, TweenInfo.new(travel, Enum.EasingStyle.Linear), { CFrame = CFrame.lookAt(to - dirU * headLen / 2, to + dirU) }):Play()
+	Debris:AddItem(head, travel + 0.02)
 end
 
 -- 탄피: 총 오른쪽 위로 튕겨 나가 굴러떨어짐 (실제 물리, 1.5초 뒤 사라짐)
@@ -138,16 +167,53 @@ function GunFX.Impact(pos: Vector3, normal: Vector3?, kind: string, scale: numbe
 	local s = scale or 1
 	local n = normal or Vector3.yAxis
 	if kind == "person" then
-		burst(pos, math.floor(10 * s), ColorSequence.new(Color3.fromRGB(255, 50, 50), Color3.fromRGB(150, 0, 0)), NumberRange.new(8, 20), 0.35 * s, NumberRange.new(0.15, 0.35), n, 60)
+		burst(pos, math.floor(12 * s), ColorSequence.new(Color3.fromRGB(255, 50, 50), Color3.fromRGB(150, 0, 0)), NumberRange.new(8, 22), 0.35 * s, NumberRange.new(0.15, 0.35), n, 60)
 	elseif kind == "car" then
-		burst(pos, math.floor(14 * s), ColorSequence.new(Color3.fromRGB(255, 220, 120), Color3.fromRGB(255, 120, 30)), NumberRange.new(25, 55), 0.2 * s, NumberRange.new(0.1, 0.3), n, 70)
+		-- 금속: 불똥이 사방으로 길게 + 작은 파편
+		burst(pos, math.floor(18 * s), ColorSequence.new(Color3.fromRGB(255, 240, 160), Color3.fromRGB(255, 120, 30)), NumberRange.new(30, 65), 0.18 * s, NumberRange.new(0.12, 0.35), n, 75)
 	else
-		burst(pos, math.floor(8 * s), ColorSequence.new(Color3.fromRGB(220, 210, 190), Color3.fromRGB(140, 130, 120)), NumberRange.new(6, 16), 0.5 * s, NumberRange.new(0.2, 0.45), n, 50)
+		-- 땅/벽: 먼지 + 연기 + 파편 + 총알 자국
+		burst(pos, math.floor(10 * s), ColorSequence.new(Color3.fromRGB(230, 220, 200), Color3.fromRGB(140, 130, 120)), NumberRange.new(8, 20), 0.5 * s, NumberRange.new(0.25, 0.5), n, 45)
+		smokePuff(pos + n * 0.3, 1.6 * s, 0.6, n * 1.2)
+		-- 총알 자국: 표면에 붙은 검은 원 (8초 뒤 서서히 사라짐)
+		local hole = part(Vector3.new(0.05, 0.35 * s, 0.35 * s), CFrame.lookAt(pos + n * 0.03, pos + n * 2) * CFrame.Angles(0, math.pi / 2, 0), Color3.fromRGB(25, 22, 20), Enum.Material.SmoothPlastic)
+		hole.Shape = Enum.PartType.Cylinder
+		task.delay(7, function()
+			if hole.Parent then
+				TweenService:Create(hole, TweenInfo.new(1), { Transparency = 1 }):Play()
+			end
+		end)
+		Debris:AddItem(hole, 8.2)
 	end
-	local flash = part(Vector3.one * 0.8 * s, CFrame.new(pos), Color3.new(1, 1, 0.9))
+	-- 작은 파편 조각 (실제 물리로 튐)
+	if kind ~= "person" then
+		local folder = workspace:FindFirstChild("LocalFX")
+		if not folder then
+			folder = Instance.new("Folder")
+			folder.Name = "LocalFX"
+			folder.Parent = workspace
+		end
+		for _ = 1, math.floor(3 * s) do
+			local chip = Instance.new("Part")
+			chip.Size = Vector3.one * (0.12 + math.random() * 0.12)
+			chip.Color = kind == "car" and Color3.fromRGB(255, 200, 90) or Color3.fromRGB(120, 110, 100)
+			chip.Material = kind == "car" and Enum.Material.Neon or Enum.Material.Slate
+			chip.CanQuery = false
+			chip.CanTouch = false
+			chip.CastShadow = false
+			chip.Massless = true
+			chip.CFrame = CFrame.new(pos + n * 0.2)
+			chip.Parent = folder
+			local spray = (n + Vector3.new(math.random() - 0.5, math.random() * 0.5, math.random() - 0.5)).Unit
+			chip.AssemblyLinearVelocity = spray * (18 + math.random() * 14)
+			chip.AssemblyAngularVelocity = Vector3.new(math.random(), math.random(), math.random()) * 25
+			Debris:AddItem(chip, 0.8)
+		end
+	end
+	local flash = part(Vector3.one * 0.6 * s, CFrame.new(pos), Color3.new(1, 1, 0.9))
 	flash.Shape = Enum.PartType.Ball
-	TweenService:Create(flash, TweenInfo.new(0.1), { Size = Vector3.one * 1.8 * s, Transparency = 1 }):Play()
-	Debris:AddItem(flash, 0.12)
+	TweenService:Create(flash, TweenInfo.new(0.09), { Size = Vector3.one * 2 * s, Transparency = 1 }):Play()
+	Debris:AddItem(flash, 0.1)
 end
 
 -- 맞은 인스턴스 → 효과 종류
