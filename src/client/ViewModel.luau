@@ -120,6 +120,7 @@ local oneHandedAds = false -- 조준하면 한손 (리볼버): 왼손이 빠지�
 local speedLoader: Model? = nil -- 리볼버 스피드로더 (장전 때만 보임)
 local cylSpinV = 0 -- 리볼버 실린더 헛도는 속도 (라디안/초, 점점 줄어듦)
 local cylLength, loaderLength = 0.4, 0.22 -- 실린더 길이, 스피드로더 길이 (스피드로더를 실린더 뒤에 딱 맞게)
+local cylRearZ = 0.2 -- 실린더 뒷면 위치 (실린더 피벗 기준 +Z)
 local chamberRadius = 0.066 -- 실린더 축에서 약실까지 거리 (README 원본 값 × 크기)
 local chamberRound: BasePart? = nil -- 스나 약실 탄환 (볼트 젖혔을 때만 보임)
 local chamberLocal = CFrame.identity
@@ -562,16 +563,16 @@ function ViewModel.Set(weaponId: string)
 			rMax = math.max(rMax, math.abs(p.X) + ex.X, math.abs(p.Y) + ex.Y)
 		end
 		cylLength = math.clamp(zMax - zMin, 0.1 * S, 1.2 * S)
-		local diam = math.clamp(rMax * 2, 0.2 * S, 1.0 * S)
-		chamberRadius = math.min(0.066 * S, diam * 0.32) -- README: 축에서 0.066 (원본 크기 기준)
-		if chamberRadius < diam * 0.18 then
-			chamberRadius = diam * 0.3 -- 모델이 README 와 다르면 지름 기준
-		end
-		loaderLength = cylLength * 0.35
-		local roundDiam = diam * 0.2
+		cylRearZ = zMax -- 실린더 뒷면 (피벗 기준 +Z)
+		-- 약실: README 값 (축에서 0.066, 원본 크기 기준). 탄 굵기는 약실 간격보다 작게 → 실린더 밖으로 안 튀어나옴
+		chamberRadius = 0.066 * S
+		local roundDiam = chamberRadius * 0.8
+		local roundLen = math.min(cylLength * 0.85, chamberRadius * 4)
+		loaderLength = roundLen * 0.35
+		local ringDiam = chamberRadius * 2 + roundDiam * 1.5
 		local ring = Instance.new("Part")
 		ring.Shape = Enum.PartType.Cylinder
-		ring.Size = Vector3.new(loaderLength, diam * 0.92, diam * 0.92)
+		ring.Size = Vector3.new(loaderLength, ringDiam, ringDiam)
 		ring.Color = Color3.fromRGB(30, 30, 34)
 		ring.Material = Enum.Material.Metal
 		ring.CFrame = CFrame.Angles(0, math.pi / 2, 0) -- 원통 축 = Z (총열 방향)
@@ -582,11 +583,11 @@ function ViewModel.Set(weaponId: string)
 			local a = i * math.pi / 3 + math.pi / 2 -- 맨 위 약실부터 (README: 맨 위가 총열과 일직선)
 			local round = Instance.new("Part")
 			round.Shape = Enum.PartType.Cylinder
-			round.Size = Vector3.new(cylLength * 0.9, roundDiam, roundDiam)
+			round.Size = Vector3.new(roundLen, roundDiam, roundDiam)
 			round.Color = Color3.fromRGB(225, 175, 70)
 			round.Material = Enum.Material.Metal
 			-- 탄은 스피드로더 앞쪽(-Z)으로 튀어나와 약실에 들어감
-			round.CFrame = CFrame.new(math.cos(a) * chamberRadius, math.sin(a) * chamberRadius, -(loaderLength + cylLength * 0.9) / 2)
+			round.CFrame = CFrame.new(math.cos(a) * chamberRadius, math.sin(a) * chamberRadius, -(loaderLength + roundLen) / 2)
 				* CFrame.Angles(0, math.pi / 2, 0)
 			setupPart(round)
 			round.Name = "Round"
@@ -595,20 +596,20 @@ function ViewModel.Set(weaponId: string)
 		sl.WorldPivot = CFrame.identity -- 기준 = 링 가운데, 축 = Z
 		sl.Parent = m
 		speedLoader = sl
-		-- 실린더 약실 탄 6발: 실린더와 같이 돌고 열림 (실린더 움직임 목록에 같이 넣음)
-		--   맨 위(총열과 일직선)가 0번. 쏘면 그 칸이 빈 탄피 색으로
+		-- 실린더 약실 탄 6발: 실린더 뒷면에서 약실 안으로 쏙 (뒤쪽 뇌관만 보임), 실린더와 같이 돌고 열림
+		--   맨 위(총열과 일직선)가 0번. 쏘면 그 칸이 비어 보임
 		table.clear(cylRounds)
 		for i = 0, 5 do
 			local a = math.pi / 2 + i * math.pi / 3
 			local rnd = Instance.new("Part")
 			rnd.Name = "CylRound"
 			rnd.Shape = Enum.PartType.Cylinder
-			rnd.Size = Vector3.new(cylLength * 0.98, roundDiam * 0.95, roundDiam * 0.95)
+			rnd.Size = Vector3.new(roundLen, roundDiam, roundDiam)
 			rnd.Color = Color3.fromRGB(225, 175, 70)
 			rnd.Material = Enum.Material.Metal
 			setupPart(rnd)
 			rnd.Parent = m
-			local rel = CFrame.new(cylSet.pivot + Vector3.new(math.cos(a) * chamberRadius, math.sin(a) * chamberRadius, 0.01 * S))
+			local rel = CFrame.new(cylSet.pivot + Vector3.new(math.cos(a) * chamberRadius, math.sin(a) * chamberRadius, cylRearZ - roundLen / 2 - 0.004 * S))
 				* CFrame.Angles(0, math.pi / 2, 0)
 			table.insert(cylSet.parts, { part = rnd, rel = rel })
 			table.insert(cylRounds, { part = rnd, idx = i })
@@ -835,10 +836,10 @@ function ViewModel.Update(cam: Camera, state)
 		leftAwayAmt = smooth(0, 0.05, r) * (1 - smooth(0.2, 0.26, r))
 		local wind = smooth(0, 0.06, r) * (1 - smooth(0.06, 0.085, r))
 		local snap = smooth(0.06, 0.095, r) * (1 - smooth(0.11, 0.26, r))
-		-- 손목이 아니라 팔꿈치(손 아래 뒤쪽)를 축으로 → 총과 손이 같이 휙 쓸려 감 (한손으로 탁 꺾기)
-		local elbow = Vector3.new(0, -0.9 * S0, 1.0 * S0)
-		cf *= aboutPoint(elbow, CFrame.Angles(0, 0, math.rad(10) * wind))
-		cf *= aboutPoint(elbow, CFrame.Angles(math.rad(-4) * snap, math.rad(-6) * snap, math.rad(-55) * snap))
+		-- 팔은 그대로, 손목만 돌려서 탁 털기 (손잡이 바로 뒤가 축)
+		local wrist = Vector3.new(0, -0.08 * S0, 0.2 * S0)
+		cf *= aboutPoint(wrist, CFrame.Angles(0, 0, math.rad(10) * wind))
+		cf *= aboutPoint(wrist, CFrame.Angles(math.rad(-4) * snap, math.rad(-6) * snap, math.rad(-55) * snap))
 		if crossed(0.09) and magSet then
 			-- 총이 오른쪽으로 꺾이면서 아래쪽 탄창은 왼쪽 아래로 빙글빙글 날아감
 			throwSet(magSet, cf, -cam.CFrame.RightVector * 22 - cam.CFrame.UpVector * 3 + cam.CFrame.LookVector * 3, cam.CFrame.LookVector * 22)
@@ -915,6 +916,8 @@ function ViewModel.Update(cam: Camera, state)
 	elseif state.reload and style == "revolver" then
 		-- 1) "/" 반대 방향(총 위쪽이 왼쪽)으로 탁 쳐서 실린더 열고 휙 돌림 (0~0.08)
 		local snapOpen = smooth(0, 0.025, r) * (1 - smooth(0.05, 0.12, r)) -- 한 번에 탁 (짧고 절도 있게)
+		-- 장전은 한손: 왼손은 총에서 떼고(아래로), 스피드로더 들 때만 들어옴
+		leftAwayAmt = smooth(0, 0.04, r) * (1 - smooth(0.9, 1, r))
 		-- 팔꿈치 축으로 팔째 탁 (총만 꺾이지 않게)
 		local elbow = Vector3.new(0, -0.9 * S0, 1.0 * S0)
 		cf *= aboutPoint(elbow, CFrame.Angles(math.rad(-6) * snapOpen, 0, math.rad(42) * snapOpen))
@@ -933,7 +936,7 @@ function ViewModel.Update(cam: Camera, state)
 			local leave = smooth(0.55, 0.61, r)
 			local swing = hingeLocal and (hingeLocal * CFrame.Angles(0, 0, math.rad(VM.cylinderSwing) * cylOpen) * hingeLocal:Inverse())
 				or aboutPoint(cylSet.pivot + Vector3.new(0, -0.12 * S0, 0), CFrame.Angles(0, 0, math.rad(VM.cylinderSwing) * cylOpen))
-			local depth = cylLength / 2 + loaderLength / 2
+			local depth = cylRearZ + loaderLength / 2 -- 링이 실린더 뒷면에 딱 붙는 위치
 			local rear = swing * CFrame.new(cylSet.pivot + Vector3.new(0, 0, depth + 0.35 * S0 * (1 - push)))
 			loaderPose = rear * CFrame.new(-0.5 * S0 * (1 - come) - 0.9 * S0 * leave, -0.2 * S0 * (1 - come), 1.0 * S0 * (1 - come) + 0.3 * S0 * leave)
 			leftTarget = loaderPose.Position + Vector3.new(0, -0.06, 0.15 * S0)
@@ -1070,8 +1073,8 @@ function ViewModel.Update(cam: Camera, state)
 		end
 		local emptyNow = style == "revolver" and r >= 0.24 and r < 0.53
 		for _, cr in cylRounds do
-			cr.part.LocalTransparencyModifier = emptyNow and 1 or 0
-			cr.part.Color = cylSpent[cr.idx + 1] and Color3.fromRGB(110, 85, 55) or Color3.fromRGB(225, 175, 70)
+			-- 쏜 칸은 비어 보임 (쏠 때마다 실린더가 돌며 한 칸씩 빔)
+			cr.part.LocalTransparencyModifier = (emptyNow or cylSpent[cr.idx + 1]) and 1 or 0
 		end
 		local swing
 		if hingeLocal then
