@@ -355,8 +355,15 @@ local function placeTemplate(template: Model, rifle: Instance?, parent: Instance
 	local m = template:Clone()
 	m.Name = "Sniper" .. idx
 	m:SetAttribute("Sniper", true)
+	-- 생성기가 이미 한 번 만든 스나이퍼(개발자가 손으로 자세 다듬어서 다시 넣은 것)면
+	-- 자세/총/크기는 손대지 않고 그대로 씀 (SniperBaked)
+	local baked = template:GetAttribute("SniperBaked") == true
+	if baked then
+		rifle = nil
+		scale = 1
+	end
 	-- R6 면 저격 자세로 꺾기 + 총 쥐어주기, 그다음 관절을 전부 없앰 (전부 고정되니 자세가 그대로 남음)
-	local Bf = A.sniperPose.enabled and poseR6(m) or nil
+	local Bf = (not baked and A.sniperPose.enabled) and poseR6(m) or nil
 	if rifle then
 		local torso = m:FindFirstChild("Torso") or m:FindFirstChild("UpperTorso")
 		local frame = Bf or (torso and torso:IsA("BasePart") and torso.CFrame) or m:GetPivot()
@@ -402,6 +409,7 @@ local function placeTemplate(template: Model, rifle: Instance?, parent: Instance
 	if not m:FindFirstChild("Muzzle", true) then
 		warn("[ArenaBuilder] 스나이퍼 템플릿에 'Muzzle'(총구 Attachment 또는 파트)이 없어요 → 몸 중심에서 쏘는 걸로 보임")
 	end
+	m:SetAttribute("SniperBaked", true) -- 이걸 복사해서 템플릿으로 넣으면 손댄 자세 그대로 다시 씀
 	m.Parent = parent
 	return m
 end

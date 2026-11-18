@@ -11,6 +11,11 @@
    - 거꾸로 쥐면 `A.sniperPose.rifleFlip = true`, 뒤집히면 `rifleUpsideDown = true`, 쥐는 위치 `rifleGrip`
    - 자세 각도/손발 위치도 `A.sniperPose` 에서 조절
 
+**자세 손으로 다듬기**
+1. 위 방법으로 맵을 한 번 만든 뒤, `Workspace.Map.Curtain` 안의 스나이퍼 하나(`Sniper1` 등)를 회전/이동 도구로 직접 다듬음 (관절이 없고 고정돼 있어서 파트를 그냥 돌리면 됨)
+2. 다듬은 걸 복사 → `ServerStorage.ArenaModels` 에 붙여넣고, 원래 `Sniper` 는 지우거나 이름 바꾸고, 붙여넣은 걸 `Sniper` 로 이름 변경
+3. 맵 다시 만들기 → 다듬은 자세 그대로 8명 모두 적용 (Attribute `SniperBaked` 가 붙어 있어서 자세/총/크기를 다시 건드리지 않음)
+
 아래 표는 직접 자세를 잡아서 넣을 때 (R15 등):
 
 | 할 것 | 설명 |
