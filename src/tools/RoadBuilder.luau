@@ -29,7 +29,12 @@ local STYLE = {
 	ground = Color3.fromRGB(95, 200, 105),
 	pillar = Color3.fromRGB(150, 155, 170),
 	railHeight = 15, -- 바닥보다 이만큼 높으면 가드레일
+	junctionFlatRadius = 90, -- 갈림길이 붙는 곳 주변 이 거리 안은 큰 길 기울기를 0 으로 펴줌 (단차 방지)
 }
+
+-- 맵 규모: 아래 좌표에 전부 곱해짐 (점 좌표는 원래 크기 기준으로 적고, 키우고 싶으면 여기만)
+local MAP_SCALE = 1.6 -- 가로(x, z)
+local HEIGHT_SCALE = 1.2 -- 높이(y)
 
 -- ===== 길 모양 =====
 -- 그리는 순서가 중요: 먼저 그린 길에 나중 길이 "붙을" 수 있음 (join)
@@ -61,7 +66,11 @@ local function ringPoints(center: Vector3, radius: number, count: number, bank: 
 end
 
 local RING_CENTER = Vector3.new(330, 20, -230)
-local RING_RADIUS = 200
+local RING_RADIUS = 230 -- 안쪽이 도시
+
+-- 다운힐 산 (서쪽 끝): 지형(Terrain) 언덕 + 올라가는 길 + 꼭대기에서 구불구불 내려오는 다운힐 전용 길
+local MOUNTAIN = { center = Vector3.new(-1000, 0, -650), radius = 520, height = 110 }
+local SUMMIT = Vector3.new(-1000, 160, -830)
 
 local ROUTES = {
 	{
@@ -168,10 +177,59 @@ local ROUTES = {
 			{ join = "Highway", near = { -470, 570 } },
 		},
 	},
+	-- 도시 안 십자 도로 (O 자에서 O 자로, 가운데에서 교차)
+	{
+		name = "CityStreetNS",
+		width = 40,
+		points = {
+			{ join = "CenterRing", near = { RING_CENTER.X, RING_CENTER.Z - RING_RADIUS } },
+			{ RING_CENTER.X, RING_CENTER.Y, RING_CENTER.Z },
+			{ join = "CenterRing", near = { RING_CENTER.X, RING_CENTER.Z + RING_RADIUS } },
+		},
+	},
+	{
+		name = "CityStreetEW",
+		width = 40,
+		lowerExtra = -0.06, -- 남북 도로와 가운데서 겹치는 곳 깜빡임 방지
+		points = {
+			{ join = "CenterRing", near = { RING_CENTER.X - RING_RADIUS, RING_CENTER.Z } },
+			{ RING_CENTER.X, RING_CENTER.Y, RING_CENTER.Z },
+			{ join = "CenterRing", near = { RING_CENTER.X + RING_RADIUS, RING_CENTER.Z } },
+		},
+	},
+	-- 산 올라가는 길 (완만하게)
+	{
+		name = "MountainAccess",
+		width = 44,
+		points = {
+			{ join = "WestBypass", near = { -200, -540 } },
+			{ -380, 34, -700 },
+			{ -560, 62, -880, bank = -4 },
+			{ -760, 100, -1000, bank = 5 },
+			{ -930, 135, -960 },
+			{ SUMMIT.X, SUMMIT.Y, SUMMIT.Z },
+		},
+	},
+	-- 다운힐 전용: 꼭대기에서 지그재그로 확확 꺾이며 내려와 우회로에 합류
+	{
+		name = "MountainDownhill",
+		width = 44,
+		points = {
+			{ join = "MountainAccess", near = { SUMMIT.X, SUMMIT.Z } },
+			{ -1080, 152, -720, bank = -6 },
+			{ -980, 140, -620, bank = 7 },
+			{ -1100, 126, -520, bank = -8 },
+			{ -980, 112, -430, bank = 8 },
+			{ -1060, 98, -330, bank = -6 },
+			{ -940, 84, -260, bank = 6 },
+			{ -820, 70, -300 },
+			{ -740, 58, -260 },
+			{ join = "WestBypass", near = { -650, -220 } },
+		},
+	},
 }
 
 
-local SPAWN = { position = Vector3.new(0, 11, 680), lookAt = Vector3.new(0, 11, 600) }
 
 ----------------------------------------------------------------------
 
@@ -386,7 +444,7 @@ local function planRoutes()
 				assert(target, "[RoadBuilder] '" .. route.name .. "' 가 붙으려는 길 '" .. tostring(p.join) .. "' 이 먼저 정의돼야 해요")
 				local best, bestD = nil, math.huge
 				for _, s in target.samples do
-					local d = (Vector2.new(s.pos.X, s.pos.Z) - Vector2.new(p.near[1], p.near[2])).Magnitude
+					local d = (Vector2.new(s.pos.X, s.pos.Z) - Vector2.new(p.near[1] * MAP_SCALE, p.near[2] * MAP_SCALE)).Magnitude
 					if d < bestD then
 						best, bestD = s, d
 					end
@@ -402,7 +460,10 @@ local function planRoutes()
 					trimEnd = cut
 				end
 			else
-				table.insert(resolved, p)
+				-- 맵 규모 적용
+				local q = table.clone(p)
+				q[1], q[2], q[3] = p[1] * MAP_SCALE, p[2] * HEIGHT_SCALE, p[3] * MAP_SCALE
+				table.insert(resolved, q)
 			end
 		end
 		local r = table.clone(route)
@@ -413,13 +474,175 @@ local function planRoutes()
 			width = width,
 			trimStart = trimStart,
 			trimEnd = trimEnd,
-			lower = (trimStart > 0 or trimEnd > 0) and -0.06 or 0,
+			lower = ((trimStart > 0 or trimEnd > 0) and -0.06 or 0) + (route.lowerExtra or 0),
 			openings = {},
 		}
 		byName[route.name] = plan
 		table.insert(plans, plan)
 	end
+	-- 갈림길이 붙는 곳 주변은 큰 길 기울기를 0 으로 부드럽게 펴줌 (기울어진 길에 평평한 길이 붙으면 단차가 생겨 못 지나감)
+	for _, plan in plans do
+		for _, o in plan.openings do
+			local R = o.radius + STYLE.junctionFlatRadius
+			for _, s in plan.samples do
+				local d = (Vector2.new(s.pos.X, s.pos.Z) - Vector2.new(o.pos.X, o.pos.Z)).Magnitude
+				if d < R then
+					local t = d / R
+					s.bank *= t * t * (3 - 2 * t)
+				end
+			end
+		end
+	end
 	return plans
+end
+
+-- ===== 중앙 도시 (O 자 도로 안쪽) =====
+local CITY = {
+	lotSpacing = 78, -- 건물 자리 간격
+	streetClear = 50, -- 십자 도로 중심선에서 이만큼은 비움
+	edgeClear = 75, -- O 자 도로 안쪽 가장자리에서 이만큼은 비움
+	minHeight = 35,
+	maxHeight = 150,
+	colors = {
+		Color3.fromRGB(120, 215, 210), -- 민트
+		Color3.fromRGB(250, 170, 140), -- 살구
+		Color3.fromRGB(170, 160, 240), -- 라벤더
+		Color3.fromRGB(250, 220, 130), -- 크림 옐로
+		Color3.fromRGB(140, 190, 250), -- 하늘
+		Color3.fromRGB(240, 150, 180), -- 핑크
+		Color3.fromRGB(235, 235, 240), -- 흰색
+	},
+	window = Color3.fromRGB(45, 80, 190),
+	roof = Color3.fromRGB(90, 95, 110),
+	plaza = Color3.fromRGB(205, 200, 190),
+}
+
+local function makeSign(parent: Instance, cf: CFrame, size: Vector3, text: string, bg: Color3, fg: Color3): Part
+	local board = newPart(parent, "Sign", size, cf, bg)
+	for _, face in { Enum.NormalId.Front, Enum.NormalId.Back } do
+		local sg = Instance.new("SurfaceGui")
+		sg.Face = face
+		sg.PixelsPerStud = 20
+		sg.LightInfluence = 0
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.fromScale(1, 1)
+		label.BackgroundTransparency = 1
+		label.TextScaled = true
+		label.Font = Enum.Font.GothamBlack
+		label.TextColor3 = fg
+		label.Text = text
+		label.Parent = sg
+		sg.Parent = board
+	end
+	return board
+end
+
+local function makeBuilding(parent: Instance, base: Vector3, w: number, d: number, h: number, color: Color3)
+	local m = Instance.new("Model")
+	m.Name = "Building"
+	newPart(m, "Body", Vector3.new(w, h, d), CFrame.new(base + Vector3.new(0, h / 2, 0)), color, Enum.Material.SmoothPlastic)
+	-- 창문 띠 (건물을 한 바퀴 두르는 얇은 파란 띠)
+	local y = 10
+	while y < h - 6 do
+		newPart(m, "Windows", Vector3.new(w + 0.4, 4, d + 0.4), CFrame.new(base + Vector3.new(0, y, 0)), CITY.window, Enum.Material.Glass)
+		y += 13
+	end
+	newPart(m, "Roof", Vector3.new(w + 2, 2, d + 2), CFrame.new(base + Vector3.new(0, h + 1, 0)), CITY.roof, Enum.Material.SmoothPlastic)
+	m.Parent = parent
+end
+
+-- 딜러샵: 유리 전시장 + 간판 + 차 전시대 3개 (나중에 상점 UI 를 여기에 연결: Attribute DealerShop)
+local function makeDealer(parent: Instance, base: Vector3, facing: Vector3): Model
+	local m = Instance.new("Model")
+	m.Name = "DealerShop"
+	m:SetAttribute("DealerShop", true)
+	local W, D, H = 110, 70, 28
+	local look = CFrame.lookAt(base, base + facing)
+	local function at(x: number, y: number, z: number): CFrame
+		return look * CFrame.new(x, y, z)
+	end
+	-- 바닥 전시장
+	newPart(m, "Floor", Vector3.new(W, 1, D), at(0, 0.5, 0), Color3.fromRGB(235, 235, 240), Enum.Material.SmoothPlastic)
+	-- 뒷벽, 옆벽 (앞은 유리)
+	newPart(m, "BackWall", Vector3.new(W, H, 2), at(0, H / 2, D / 2), Color3.fromRGB(40, 45, 60))
+	newPart(m, "SideWall", Vector3.new(2, H, D), at(-W / 2, H / 2, 0), Color3.fromRGB(40, 45, 60))
+	newPart(m, "SideWall", Vector3.new(2, H, D), at(W / 2, H / 2, 0), Color3.fromRGB(40, 45, 60))
+	local glass = newPart(m, "Glass", Vector3.new(W, H - 6, 0.6), at(0, (H - 6) / 2 + 1, -D / 2), Color3.fromRGB(170, 220, 255), Enum.Material.Glass)
+	glass.Transparency = 0.6
+	glass.CanCollide = false -- 들어가서 구경할 수 있게
+	newPart(m, "Roof", Vector3.new(W + 4, 3, D + 4), at(0, H + 1.5, 0), Color3.fromRGB(255, 190, 40), Enum.Material.SmoothPlastic)
+	makeSign(m, at(0, H + 9, -D / 2 - 1), Vector3.new(W * 0.8, 10, 1), "CAR DEALER", Color3.fromRGB(255, 190, 40), Color3.fromRGB(30, 30, 40))
+	-- 차 전시대 (빙글 도는 원판은 나중에)
+	for k = -1, 1 do
+		local pad = newPart(m, "DisplayPad", Vector3.new(1, 22, 22), at(k * 34, 1.2, 4) * CFrame.Angles(0, 0, math.rad(90)), Color3.fromRGB(80, 220, 255), Enum.Material.Neon)
+		pad.Shape = Enum.PartType.Cylinder
+		pad:SetAttribute("DisplaySlot", k + 2)
+	end
+	m.Parent = parent
+	return m
+end
+
+local function buildCity(map: Instance): CFrame
+	local city = Instance.new("Folder")
+	city.Name = "City"
+	city.Parent = map
+	local c = Vector3.new(RING_CENTER.X * MAP_SCALE, RING_CENTER.Y * HEIGHT_SCALE, RING_CENTER.Z * MAP_SCALE)
+	local ringR = RING_RADIUS * MAP_SCALE
+	local innerR = ringR - 23 - STYLE.shoulder -- O 자 도로 안쪽 갓길 끝
+
+	-- 도시 바닥 (O 자 도로 높이에 맞춘 둥근 대지)
+	local plateau = newPart(city, "Plateau", Vector3.new(c.Y - STYLE.groundY + 2, innerR * 2 + 4, innerR * 2 + 4),
+		CFrame.new(c.X, (c.Y + STYLE.groundY) / 2 - 1.05, c.Z) * CFrame.Angles(0, 0, math.rad(90)), CITY.plaza, Enum.Material.Concrete)
+	plateau.Shape = Enum.PartType.Cylinder
+
+	-- 딜러샵: 남쪽 길 입구 동쪽
+	local dealerBase = c + Vector3.new(105, 0, ringR * 0.55)
+	makeDealer(city, dealerBase, Vector3.new(-1, 0, 0)) -- 유리 앞면이 남북 도로를 바라봄
+
+	-- 빌딩: 격자 자리마다 (도로/딜러샵 자리는 비움)
+	local rng = Random.new(1118)
+	local buildings = Instance.new("Folder")
+	buildings.Name = "Buildings"
+	buildings.Parent = city
+	local reach = innerR - CITY.edgeClear
+	for gx = -reach, reach, CITY.lotSpacing do
+		for gz = -reach, reach, CITY.lotSpacing do
+			local p = Vector3.new(gx, 0, gz)
+			if p.Magnitude > reach then
+				continue
+			end
+			if math.abs(gx) < CITY.streetClear or math.abs(gz) < CITY.streetClear then
+				continue -- 십자 도로
+			end
+			if (c + p - dealerBase).Magnitude < 115 then
+				continue -- 딜러샵 자리
+			end
+			local w = rng:NextInteger(36, 56)
+			local d = rng:NextInteger(36, 56)
+			local h = rng:NextInteger(CITY.minHeight, CITY.maxHeight)
+			makeBuilding(buildings, c + p, w, d, h, CITY.colors[rng:NextInteger(1, #CITY.colors)])
+		end
+	end
+
+	-- 스폰: 딜러샵 앞 남북 도로 위, 북쪽(도시 가운데)을 바라봄
+	local spawnPos = Vector3.new(c.X, c.Y + 1, dealerBase.Z + 20)
+	return CFrame.lookAt(spawnPos, spawnPos + Vector3.new(0, 0, -1))
+end
+
+-- ===== 다운힐 산 지형 (Terrain) =====
+-- 가운데가 높은 원뿔 모양 언덕. 도로(둑)는 이 위에 올라감 (지형은 도로보다 항상 낮게 잡음)
+local function buildMountain()
+	local terrain = workspace.Terrain
+	local c = Vector3.new(MOUNTAIN.center.X * MAP_SCALE, 0, MOUNTAIN.center.Z * MAP_SCALE)
+	local R = MOUNTAIN.radius * MAP_SCALE
+	local H = MOUNTAIN.height * HEIGHT_SCALE
+	local steps = 26
+	for k = 0, steps - 1 do
+		local r = R * (1 - k / steps)
+		local h = H * (k / steps) ^ 0.9 + 4 -- 바깥은 낮고 가운데로 갈수록 높게
+		local material = (k > steps * 0.75) and Enum.Material.Rock or Enum.Material.Grass
+		terrain:FillCylinder(CFrame.new(c.X, STYLE.groundY + h / 2 - 2, c.Z), h, r, material)
+	end
 end
 
 function RoadBuilder.Build()
@@ -436,7 +659,7 @@ function RoadBuilder.Build()
 	map.Name = "Map"
 
 	-- 바닥 (넓은 잔디)
-	newPart(map, "Ground", Vector3.new(4000, 4, 4000), CFrame.new(0, STYLE.groundY - 2, 0), STYLE.ground, Enum.Material.SmoothPlastic)
+	newPart(map, "Ground", Vector3.new(9000, 4, 9000), CFrame.new(0, STYLE.groundY - 2, 0), STYLE.ground, Enum.Material.SmoothPlastic)
 
 	local roads = Instance.new("Folder")
 	roads.Name = "Roads"
@@ -453,12 +676,17 @@ function RoadBuilder.Build()
 		})
 	end
 
+	-- 중앙 도시 + 딜러샵 (스폰 위치도 여기서 정함)
+	local spawnCF = buildCity(map)
+	-- 다운힐 산 지형 (이미 있는 지형은 그대로 두고 덧칠)
+	buildMountain()
+
 	local spawn = Instance.new("SpawnLocation")
 	spawn.Name = "MainSpawn"
 	spawn.Anchored = true
 	spawn.Neutral = true
 	spawn.Size = Vector3.new(12, 1, 12)
-	spawn.CFrame = CFrame.lookAt(SPAWN.position, SPAWN.lookAt)
+	spawn.CFrame = spawnCF
 	spawn.Color = Color3.fromRGB(80, 200, 255)
 	spawn.Parent = map
 
