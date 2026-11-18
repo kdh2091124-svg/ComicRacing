@@ -1,61 +1,60 @@
--- 도로 생성기: 부드러운 곡선 도로망을 깐다 (구조물 없이 길만). Studio 명령줄에서 실행:
+-- 월드 생성기: 큰 오픈월드 도로망 + 중앙 도시 + 가파른 고갯길 산. Studio 명령줄에서 실행:
 -- (:Clone() 을 꼭 붙이기 — 안 붙이면 명령줄이 예전 코드를 기억해서 수정이 반영 안 됨)
 --
 --   require(game.ServerStorage.Tools.RoadBuilder:Clone()).Build()
 --
--- • 기존 Workspace.Map 은 지우지 않고 ServerStorage.Map_backup_시간 으로 옮겨 둠 (Ctrl+Z 가능)
--- • 길 모양은 아래 ROUTES 의 점들만 고치면 됨: { x, y(높이), z, bank = 기울기(도, +면 오른쪽이 낮음), bridge = true }
--- • 점과 점 사이는 자동으로 부드러운 곡선 (Catmull-Rom 곡선)
+-- • 기존 Workspace.Map 은 지우지 않고 ServerStorage.Map_backup_시간 으로 옮겨 둠
+-- • 지형(Terrain)은 새로 만듦 (기존 지형을 지움). 지형을 남기려면 Build({ keepTerrain = true })
+-- • Ctrl+Z 로 되돌리기 가능
 --
--- 생김새 (레퍼런스 스타일):
---   아스팔트 + 노란 중앙 점선 + 흰 테두리선, 양옆 초록 갓길, 그 아래 푸른 회색 절벽 둑
---   다리(bridge) 구간은 둑 대신 기둥, 높거나 기울어진 구간엔 가드레일
+-- 길이 서로 막거나 끊기지 않게 하는 규칙 (자동):
+--   1) 자동 다리: 다른 길 위를 지나는 구간은 아래를 채우지 않고 다리(바닥판)로 → 아래 길을 막지 않음
+--   2) 자동 입구: 같은 높이로 다른 길이 닿는 곳(갈림길/교차로)은 가드레일/흰 테두리선을 비움
+--   3) 갈림길 주변은 큰 길 기울기를 0 으로 펴서 단차 없앰
+--   4) 경사 제한: 어떤 구간도 maxGrade 보다 가파르지 않게 높이를 자동으로 다듬음 (급경사로 길이 끊기지 않게)
+--   5) 꺾이는 곳은 조각을 더 겹쳐서 틈이 안 생김
+--   6) 길 아래는 지형(Terrain)으로 채움 (파트 벽 대신)
+-- 생성이 끝나면 Output 에 "길 점검" 결과가 나옴 (길마다 최대 경사, 자동 다리, 입구 수)
 
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
 
 local RoadBuilder = {}
 
 local STYLE = {
-	roadWidth = 46, -- 차도 폭 (넓게: 드리프트/추월 여유)
-	shoulder = 10, -- 양옆 잔디 갓길 폭
-	step = 5, -- 곡선을 이 길이(스터드)마다 나눠서 조각으로 깖
-	groundY = 0, -- 바닥 높이
+	roadWidth = 46,
+	shoulder = 9,
+	groundY = 0,
 	asphalt = Color3.fromRGB(78, 80, 96),
 	grass = Color3.fromRGB(110, 230, 120),
-	cliff = Color3.fromRGB(70, 90, 170), -- 둑 옆면 (푸른 회색)
 	whiteLine = Color3.fromRGB(245, 245, 245),
 	yellowLine = Color3.fromRGB(255, 225, 40),
 	rail = Color3.fromRGB(190, 195, 210),
 	ground = Color3.fromRGB(95, 200, 105),
-	pillar = Color3.fromRGB(150, 155, 170),
-	railHeight = 15, -- 바닥보다 이만큼 높으면 가드레일
-	junctionFlatRadius = 90, -- 갈림길이 붙는 곳 주변 이 거리 안은 큰 길 기울기를 0 으로 펴줌 (단차 방지)
+	deck = Color3.fromRGB(150, 155, 170),
+	junctionFlatRadius = 100, -- 갈림길 주변 이 거리 안은 큰 길 기울기 0 으로
+	sameLevel = 4, -- 높이 차이가 이 안이면 "같은 높이로 닿음" → 입구
+	underClear = 4, -- 다른 길이 이보다 낮으면 "아래 지나감" → 이 구간은 다리
+	maxGrade = 24, -- 이보다 가파른 구간은 자동으로 높이를 다듬음 (도)
+	maxGradeWarn = 18, -- 점검: 이 각도보다 가파르면 표시
 }
 
--- 맵 규모: 아래 좌표에 전부 곱해짐 (점 좌표는 원래 크기 기준으로 적고, 키우고 싶으면 여기만)
-local MAP_SCALE = 1.6 -- 가로(x, z)
-local HEIGHT_SCALE = 1.2 -- 높이(y)
+----------------------------------------------------------------------
+-- 레이아웃
+----------------------------------------------------------------------
+local CITY_CENTER = Vector3.new(0, 24, 0)
+local RING_RADIUS = 380
 
--- ===== 길 모양 =====
--- 그리는 순서가 중요: 먼저 그린 길에 나중 길이 "붙을" 수 있음 (join)
---
--- 1) Highway: 바깥 큰 순환 고속도로
---   A 출발 직선 + 언덕 꼭대기 (살짝 뜨는 구간)
---   B 오른쪽으로 크게 도는 기울어진 커브
---   C 지그재그로 올라가는 언덕길
---   D 꼭대기 헤어핀 (드리프트 구간)
---   E 구불구불 내리막
---   F 출발 직선 위를 지나가는 다리 (입체 교차)
---   G 왼쪽으로 크게 도는 기울어진 커브
---   H 출발점으로 돌아오는 빠른 커브
--- 2) CenterRing: 가운데 큰 O 자 순환 도로 (안쪽으로 살짝 기울어짐)
--- 3) Spoke*: O 자에서 고속도로로 뻗는 갈림길 4개 (서/북/동/남)
--- 4) WestBypass: 고속도로 출발 직선 끝에서 서쪽 언덕으로 크게 돌아 G 커브로 다시 합류하는 우회로
---
--- 점 형식: { x, 높이, z, bank = 기울기(도), bridge = true }
---   또는 { join = "다른 길 이름", near = { x, z } } → 그 길에서 (x, z) 에 가장 가까운 지점에 정확히 붙음 (갈림길)
+-- 고갯길 산 (북서쪽 끝): 가파르게 쫘아악 내려오는 다운힐 + 급한 헤어핀
+local TOUGE = {
+	base = Vector3.new(-2300, 55, -2400),
+	dir = Vector3.new(-1, 0, -1).Unit, -- 산꼭대기 방향
+	legs = 9, -- 지그재그 구간 수 (헤어핀 8개)
+	advance = 150, -- 한 구간마다 산 쪽으로 들어가는 거리 (위아래 길 간격, 길끼리 안 겹치게 140 이상)
+	halfLeg = 190, -- 한 구간 좌우 폭의 절반 (짧을수록 가파름)
+	hairpinOut = 50, -- 헤어핀이 바깥으로 튀어나가는 정도 (작을수록 급함)
+	summitY = 1100, -- 꼭대기 높이 (평균 경사 약 13°, 산 비탈 약 38°)
+}
 
--- 가운데 O 자 도로 점 만들기 (시계 방향 → 안쪽이 오른쪽, bank + 면 안쪽으로 기울어짐)
 local function ringPoints(center: Vector3, radius: number, count: number, bank: number)
 	local pts = {}
 	for k = 0, count - 1 do
@@ -65,174 +64,168 @@ local function ringPoints(center: Vector3, radius: number, count: number, bank: 
 	return pts
 end
 
-local RING_CENTER = Vector3.new(330, 20, -230)
-local RING_RADIUS = 230 -- 안쪽이 도시
+-- 고갯길 점: 산비탈을 좌우로 지그재그 (구간 중간엔 S 자로 꺾이고, 끝마다 급한 헤어핀)
+local function tougePoints()
+	local T = TOUGE
+	local u = T.dir
+	local v = Vector3.new(-u.Z, 0, u.X)
+	local rise = (T.summitY - T.base.Y) / T.legs
+	local pts = {}
+	local function P(a: number, l: number, y: number)
+		local p = T.base + u * a + v * l
+		table.insert(pts, { p.X, y, p.Z })
+	end
+	for i = 0, T.legs - 1 do
+		local s = (i % 2 == 0) and 1 or -1
+		local a0 = i * T.advance
+		local y0 = T.base.Y + i * rise
+		local kink = T.advance * 0.13 * s
+		P(a0, -s * T.halfLeg, y0)
+		P(a0 + kink, -s * T.halfLeg * 0.35, y0 + rise * 0.28)
+		P(a0 - kink, s * T.halfLeg * 0.35, y0 + rise * 0.55)
+		P(a0, s * T.halfLeg, y0 + rise * 0.8)
+		if i < T.legs - 1 then
+			P(a0 + T.advance * 0.5, s * (T.halfLeg + T.hairpinOut), y0 + rise * 0.9)
+		end
+	end
+	P((T.legs - 1) * T.advance + 120, 0, T.summitY)
+	return pts
+end
 
--- 다운힐 산 (서쪽 끝): 지형(Terrain) 언덕 + 올라가는 길 + 꼭대기에서 구불구불 내려오는 다운힐 전용 길
-local MOUNTAIN = { center = Vector3.new(-1000, 0, -650), radius = 520, height = 110 }
-local SUMMIT = Vector3.new(-1000, 160, -830)
-
+-- 길 목록 (위에서부터 순서대로. 나중 길이 앞의 길에 join 으로 붙을 수 있음)
+--   점: { x, 높이, z, bank = 기울기(도, + 면 오른쪽이 낮음), bridge = true }
+--       { join = "길 이름", near = { x, z } } → 그 길에서 가장 가까운 지점에 정확히 붙음
+--   옵션: width, step(조각 길이), rails(true 항상 / false 없음), fill(false = 아래 지형 안 채움), closed
 local ROUTES = {
+	-- 바깥 큰 순환 고속도로 (반시계: 남 → 동 → 북 → 서)
 	{
 		name = "Highway",
-		width = 56, -- 고속도로는 더 넓게
 		closed = true,
+		width = 58,
+		step = 10,
 		points = {
-			-- A
-			{ 0, 10, 600 },
-			{ 0, 14, 300 },
-			{ 0, 26, 70 },
-			{ 0, 26, 20 },
-			{ 0, 10, -130 },
-			{ 0, 10, -420 },
-			-- B
-			{ 60, 12, -640, bank = 8 },
-			{ 220, 16, -780, bank = 10 },
-			{ 420, 20, -820, bank = 8 },
-			-- C
-			{ 600, 28, -760 },
-			{ 720, 40, -640, bank = 6 },
-			{ 680, 52, -500, bank = -6 },
-			{ 800, 64, -380, bank = 6 },
-			{ 740, 76, -250, bank = -4 },
-			-- D
-			{ 840, 84, -110 },
-			{ 960, 84, -70, bank = 8 },
-			{ 1010, 82, 40, bank = 10 },
-			{ 950, 78, 130, bank = 8 },
-			-- E
-			{ 820, 66, 150 },
-			{ 680, 54, 250, bank = -6 },
-			{ 540, 46, 200, bank = 6 },
-			{ 400, 40, 290, bank = -5 },
-			{ 260, 36, 390 },
-			-- F (다리)
-			{ 130, 36, 430, bridge = true },
-			{ 0, 36, 440, bridge = true },
-			{ -130, 36, 440, bridge = true },
-			-- G
-			{ -300, 30, 470, bank = -6 },
-			{ -470, 22, 570, bank = -10 },
-			{ -550, 16, 730, bank = -8 },
-			-- H
-			{ -480, 12, 890, bank = -6 },
-			{ -300, 10, 960 },
-			{ -120, 10, 920, bank = -5 },
-			{ 0, 10, 780 },
+			{ 0, 20, 2500 },
+			{ 900, 28, 2380, bank = -5 },
+			{ 1750, 40, 1950, bank = -8 },
+			{ 2350, 55, 1250, bank = -6 },
+			{ 2600, 65, 450 },
+			{ 2620, 92, 0 }, -- 언덕 꼭대기 (살짝 뜀)
+			{ 2600, 60, -500 },
+			{ 2380, 48, -1300, bank = -7 },
+			{ 1850, 38, -2000, bank = -8 },
+			{ 1000, 30, -2450, bank = -5 },
+			{ 150, 32, -2580 },
+			{ -700, 42, -2450, bank = -5 },
+			{ -1450, 55, -2050, bank = -8 },
+			{ -2050, 50, -1350, bank = -7 },
+			{ -2350, 42, -500 },
+			{ -2380, 36, 350 },
+			{ -2150, 28, 1150, bank = -6 },
+			{ -1650, 24, 1900, bank = -8 },
+			{ -850, 20, 2380, bank = -5 },
 		},
 	},
 	{
 		name = "CenterRing",
 		closed = true,
 		width = 46,
-		points = ringPoints(RING_CENTER, RING_RADIUS, 16, 5),
+		step = 6,
+		rails = false,
+		points = ringPoints(CITY_CENTER, RING_RADIUS, 20, 4),
 	},
-	-- 갈림길: O 자 → 고속도로
-	{
-		name = "SpokeWest",
-		width = 40,
-		points = {
-			{ join = "CenterRing", near = { RING_CENTER.X - RING_RADIUS, RING_CENTER.Z } },
-			{ join = "Highway", near = { 0, -230 } },
-		},
-	},
-	{
-		name = "SpokeNorth",
-		width = 40,
-		points = {
-			{ join = "CenterRing", near = { RING_CENTER.X, RING_CENTER.Z - RING_RADIUS } },
-			{ 330, 19, -620 },
-			{ join = "Highway", near = { 420, -820 } },
-		},
-	},
-	{
-		name = "SpokeEast",
-		width = 40,
-		points = {
-			{ join = "CenterRing", near = { RING_CENTER.X + RING_RADIUS, RING_CENTER.Z } },
-			{ 650, 42, -270 },
-			{ join = "Highway", near = { 760, -330 } },
-		},
-	},
-	{
-		name = "SpokeSouth",
-		width = 40,
-		points = {
-			{ join = "CenterRing", near = { RING_CENTER.X, RING_CENTER.Z + RING_RADIUS } },
-			{ 350, 30, 130 },
-			{ join = "Highway", near = { 400, 290 } },
-		},
-	},
-	-- 큰 우회로: 출발 직선 끝 → 서쪽 언덕 → G 커브 합류
-	{
-		name = "WestBypass",
-		width = 46,
-		points = {
-			{ join = "Highway", near = { 0, -470 } },
-			{ -200, 14, -540 },
-			{ -450, 30, -460, bank = -6 },
-			{ -650, 45, -220, bank = 6 },
-			{ -720, 40, 100 },
-			{ -640, 30, 360, bank = -6 },
-			{ join = "Highway", near = { -470, 570 } },
-		},
-	},
-	-- 도시 안 십자 도로 (O 자에서 O 자로, 가운데에서 교차)
 	{
 		name = "CityStreetNS",
 		width = 40,
+		step = 6,
+		rails = false,
+		fill = false,
 		points = {
-			{ join = "CenterRing", near = { RING_CENTER.X, RING_CENTER.Z - RING_RADIUS } },
-			{ RING_CENTER.X, RING_CENTER.Y, RING_CENTER.Z },
-			{ join = "CenterRing", near = { RING_CENTER.X, RING_CENTER.Z + RING_RADIUS } },
+			{ join = "CenterRing", near = { CITY_CENTER.X, CITY_CENTER.Z - RING_RADIUS } },
+			{ CITY_CENTER.X, CITY_CENTER.Y, CITY_CENTER.Z },
+			{ join = "CenterRing", near = { CITY_CENTER.X, CITY_CENTER.Z + RING_RADIUS } },
 		},
 	},
 	{
 		name = "CityStreetEW",
 		width = 40,
-		lowerExtra = -0.06, -- 남북 도로와 가운데서 겹치는 곳 깜빡임 방지
+		step = 6,
+		rails = false,
+		fill = false,
+		lowerExtra = -0.06,
 		points = {
-			{ join = "CenterRing", near = { RING_CENTER.X - RING_RADIUS, RING_CENTER.Z } },
-			{ RING_CENTER.X, RING_CENTER.Y, RING_CENTER.Z },
-			{ join = "CenterRing", near = { RING_CENTER.X + RING_RADIUS, RING_CENTER.Z } },
+			{ join = "CenterRing", near = { CITY_CENTER.X - RING_RADIUS, CITY_CENTER.Z } },
+			{ CITY_CENTER.X, CITY_CENTER.Y, CITY_CENTER.Z },
+			{ join = "CenterRing", near = { CITY_CENTER.X + RING_RADIUS, CITY_CENTER.Z } },
 		},
 	},
-	-- 산 올라가는 길 (완만하게)
 	{
-		name = "MountainAccess",
+		name = "NorthRoad", -- 굽이치는 언덕길
 		width = 44,
+		step = 8,
 		points = {
-			{ join = "WestBypass", near = { -200, -540 } },
-			{ -380, 34, -700 },
-			{ -560, 62, -880, bank = -4 },
-			{ -760, 100, -1000, bank = 5 },
-			{ -930, 135, -960 },
-			{ SUMMIT.X, SUMMIT.Y, SUMMIT.Z },
+			{ join = "CenterRing", near = { 0, -RING_RADIUS } },
+			{ 60, 30, -900 },
+			{ -160, 45, -1400, bank = 6 },
+			{ 120, 55, -1900, bank = -6 },
+			{ join = "Highway", near = { 150, -2580 } },
 		},
 	},
-	-- 다운힐 전용: 꼭대기에서 지그재그로 확확 꺾이며 내려와 우회로에 합류
 	{
-		name = "MountainDownhill",
-		width = 44,
+		name = "EastRoad", -- 고속 직선 + 완만한 언덕
+		width = 46,
+		step = 10,
 		points = {
-			{ join = "MountainAccess", near = { SUMMIT.X, SUMMIT.Z } },
-			{ -1080, 152, -720, bank = -6 },
-			{ -980, 140, -620, bank = 7 },
-			{ -1100, 126, -520, bank = -8 },
-			{ -980, 112, -430, bank = 8 },
-			{ -1060, 98, -330, bank = -6 },
-			{ -940, 84, -260, bank = 6 },
-			{ -820, 70, -300 },
-			{ -740, 58, -260 },
-			{ join = "WestBypass", near = { -650, -220 } },
+			{ join = "CenterRing", near = { RING_RADIUS, 0 } },
+			{ 1000, 30, 40 },
+			{ 1700, 42, -40 },
+			{ join = "Highway", near = { 2350, 1250 } },
 		},
+	},
+	{
+		name = "SouthRoad", -- 해안 S 커브
+		width = 44,
+		step = 8,
+		points = {
+			{ join = "CenterRing", near = { 0, RING_RADIUS } },
+			{ 300, 22, 1000, bank = 6 },
+			{ -280, 22, 1550, bank = -7 },
+			{ 220, 20, 2050, bank = 6 },
+			{ join = "Highway", near = { 0, 2500 } },
+		},
+	},
+	{
+		name = "WestRoad", -- 서쪽 들판길
+		width = 44,
+		step = 8,
+		points = {
+			{ join = "CenterRing", near = { -RING_RADIUS, 0 } },
+			{ -1100, 30, 120 },
+			{ -1750, 38, -120, bank = -5 },
+			{ join = "Highway", near = { -2350, -500 } },
+		},
+	},
+	-- 고갯길: 고속도로 북서쪽에서 갈라져 가파른 산을 지그재그로 오르내림 (헤어핀 + S 꺾임)
+	{
+		name = "Touge",
+		width = 34, -- 좁게 (고갯길 느낌)
+		step = 4,
+		rails = true,
+		points = (function()
+			local pts = {
+				{ join = "Highway", near = { -1700, -1850 } },
+				{ -2000, 52, -2150 },
+			}
+			for _, p in tougePoints() do
+				table.insert(pts, p)
+			end
+			return pts
+		end)(),
 	},
 }
 
-
-
 ----------------------------------------------------------------------
-
+-- 기본 도구
+----------------------------------------------------------------------
 local function newPart(parent: Instance, name: string, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material?): Part
 	local p = Instance.new("Part")
 	p.Name = name
@@ -247,62 +240,75 @@ local function newPart(parent: Instance, name: string, size: Vector3, cf: CFrame
 	return p
 end
 
--- Catmull-Rom 곡선 위의 점
 local function catmull(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: number): Vector3
 	local t2, t3 = t * t, t * t * t
 	return 0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
 end
 
-type Sample = { pos: Vector3, bank: number, bridge: boolean }
+type Sample = { pos: Vector3, bank: number, bridge: boolean, opening: boolean, under: boolean }
 
--- 점들을 부드러운 곡선으로 촘촘하게 나눔
-local function sampleRoute(route): { Sample }
-	local pts = route.points
-	local n = #pts
-	local function P(i: number): Vector3
-		if route.closed then
-			i = (i - 1) % n + 1
-		else
-			i = math.clamp(i, 1, n)
+local function sampleRoute(points, closed: boolean, step: number): { Sample }
+	local n = #points
+	local function idx(i: number): number
+		if closed then
+			return (i - 1) % n + 1
 		end
-		local p = pts[i]
+		return math.clamp(i, 1, n)
+	end
+	local function P(i: number): Vector3
+		local p = points[idx(i)]
 		return Vector3.new(p[1], p[2], p[3])
 	end
-	local function info(i: number)
-		if route.closed then
-			i = (i - 1) % n + 1
-		else
-			i = math.clamp(i, 1, n)
-		end
-		return pts[i]
-	end
 	local samples: { Sample } = {}
-	local last = route.closed and n or n - 1
+	local last = closed and n or n - 1
 	for i = 1, last do
 		local p0, p1, p2, p3 = P(i - 1), P(i), P(i + 1), P(i + 2)
-		local a, b = info(i), info(i + 1)
-		local count = math.max(math.ceil((p2 - p1).Magnitude / STYLE.step), 1)
+		local a, b = points[idx(i)], points[idx(i + 1)]
+		local count = math.max(math.ceil((p2 - p1).Magnitude / step), 1)
 		for k = 0, count - 1 do
 			local t = k / count
-			-- 기울기는 부드럽게 (smoothstep)
 			local s = t * t * (3 - 2 * t)
 			table.insert(samples, {
 				pos = catmull(p0, p1, p2, p3, t),
 				bank = (a.bank or 0) * (1 - s) + (b.bank or 0) * s,
 				bridge = (a.bridge == true) or (b.bridge == true),
+				opening = false,
+				under = false,
 			})
 		end
 	end
-	if route.closed then
-		table.insert(samples, samples[1])
+	if closed then
+		local first = samples[1]
+		table.insert(samples, { pos = first.pos, bank = first.bank, bridge = first.bridge, opening = false, under = false })
 	else
-		local lp = pts[n]
-		table.insert(samples, { pos = P(n), bank = lp.bank or 0, bridge = lp.bridge == true })
+		local lp = points[n]
+		table.insert(samples, { pos = P(n), bank = lp.bank or 0, bridge = lp.bridge == true, opening = false, under = false })
 	end
 	return samples
 end
 
--- 한 조각의 방향 (오른쪽, 위, 앞) — 기울기(bank) 반영
+-- 경사 제한: 앞 → 뒤, 뒤 → 앞으로 훑으며 이웃 조각과 높이 차이를 maxGrade 이하로 (양 끝 높이는 유지)
+local function limitGrade(samples: { Sample })
+	local g = math.tan(math.rad(STYLE.maxGrade))
+	local function horiz(a: Vector3, b: Vector3): number
+		return (Vector2.new(a.X, a.Z) - Vector2.new(b.X, b.Z)).Magnitude
+	end
+	for _ = 1, 2 do
+		for i = 2, #samples - 1 do
+			local prev, s = samples[i - 1].pos, samples[i].pos
+			local m = g * horiz(prev, s)
+			local y = math.clamp(s.Y, prev.Y - m, prev.Y + m)
+			samples[i].pos = Vector3.new(s.X, y, s.Z)
+		end
+		for i = #samples - 1, 2, -1 do
+			local nxt, s = samples[i + 1].pos, samples[i].pos
+			local m = g * horiz(nxt, s)
+			local y = math.clamp(s.Y, nxt.Y - m, nxt.Y + m)
+			samples[i].pos = Vector3.new(s.X, y, s.Z)
+		end
+	end
+end
+
 local function frame(a: Vector3, b: Vector3, bankDeg: number)
 	local fwd = (b - a).Unit
 	local right = fwd:Cross(Vector3.yAxis)
@@ -312,38 +318,140 @@ local function frame(a: Vector3, b: Vector3, bankDeg: number)
 	right = right.Unit
 	local up = right:Cross(fwd).Unit
 	local r = math.rad(bankDeg)
-	-- bank + 면 오른쪽이 낮아짐 (오른쪽 커브용)
 	local right2 = (right * math.cos(r) - up * math.sin(r)).Unit
 	local up2 = right2:Cross(fwd).Unit
 	return right2, up2, fwd
 end
 
-type BuildOpts = {
+----------------------------------------------------------------------
+-- 1단계: 계획 (모양 계산, 갈림길 붙이기, 다리/입구 판정)
+----------------------------------------------------------------------
+type Plan = {
+	route: any,
+	samples: { Sample },
 	width: number,
-	trimStart: number, -- 시작점에서 이 거리까지는 차선/가드레일 안 그림 (다른 길에 붙는 곳)
+	half: number,
+	trimStart: number,
 	trimEnd: number,
-	lower: number, -- 갈림길은 아주 살짝 낮게 (붙는 큰 길 표면이 위로 오게 → 깜빡임 방지)
-	openings: { { pos: Vector3, radius: number } }, -- 이 근처엔 가드레일/테두리선 없음 (갈림길 입구)
+	lower: number,
+	joinPoints: { Vector3 },
 }
 
-local function nearOpening(p: Vector3, openings): boolean
-	for _, o in openings do
-		if (Vector2.new(p.X, p.Z) - Vector2.new(o.pos.X, o.pos.Z)).Magnitude < o.radius then
-			return true
+local function planRoutes(): { Plan }
+	local plans: { Plan } = {}
+	local byName: { [string]: Plan } = {}
+	for _, route in ROUTES do
+		local width = route.width or STYLE.roadWidth
+		local resolved = {}
+		local trimStart, trimEnd = 0, 0
+		for i, p in route.points do
+			if p.join then
+				local target = byName[p.join]
+				assert(target, "[RoadBuilder] '" .. route.name .. "' 가 붙으려는 길 '" .. tostring(p.join) .. "' 이 먼저 있어야 해요")
+				local best, bestD = target.samples[1], math.huge
+				for _, s in target.samples do
+					local d = (Vector2.new(s.pos.X, s.pos.Z) - Vector2.new(p.near[1], p.near[2])).Magnitude
+					if d < bestD then
+						best, bestD = s, d
+					end
+				end
+				table.insert(resolved, { best.pos.X, best.pos.Y, best.pos.Z, bank = 0 })
+				table.insert(target.joinPoints, best.pos)
+				local cut = target.half + 4
+				if i == 1 then
+					trimStart = cut
+				elseif i == #route.points then
+					trimEnd = cut
+				end
+			else
+				table.insert(resolved, p)
+			end
+		end
+		local samples = sampleRoute(resolved, route.closed == true, route.step or 6)
+		limitGrade(samples)
+		local plan: Plan = {
+			route = route,
+			samples = samples,
+			width = width,
+			half = width / 2 + STYLE.shoulder,
+			trimStart = trimStart,
+			trimEnd = trimEnd,
+			lower = ((trimStart > 0 or trimEnd > 0) and -0.06 or 0) + (route.lowerExtra or 0),
+			joinPoints = {},
+		}
+		byName[route.name] = plan
+		table.insert(plans, plan)
+	end
+
+	-- 공간 격자 (가까운 다른 길 조각 빨리 찾기)
+	local CELL = 100
+	local grid: { [string]: { { plan: Plan, s: Sample } } } = {}
+	for _, plan in plans do
+		for _, s in plan.samples do
+			local k = math.floor(s.pos.X / CELL) .. "," .. math.floor(s.pos.Z / CELL)
+			grid[k] = grid[k] or {}
+			table.insert(grid[k], { plan = plan, s = s })
 		end
 	end
-	return false
+
+	-- 다른 길과의 관계: 같은 높이로 닿으면 입구, 다른 길이 아래로 지나가면 이 구간은 다리
+	for _, plan in plans do
+		for _, s in plan.samples do
+			local cx, cz = math.floor(s.pos.X / CELL), math.floor(s.pos.Z / CELL)
+			for dx = -1, 1 do
+				for dz = -1, 1 do
+					local list = grid[(cx + dx) .. "," .. (cz + dz)]
+					if list then
+						for _, o in list do
+							if o.plan ~= plan then
+								local horiz = (Vector2.new(s.pos.X, s.pos.Z) - Vector2.new(o.s.pos.X, o.s.pos.Z)).Magnitude
+								if horiz < plan.half + o.plan.half + 6 then
+									local dy = s.pos.Y - o.s.pos.Y
+									if math.abs(dy) <= STYLE.sameLevel then
+										s.opening = true
+									elseif dy > STYLE.underClear then
+										s.under = true
+									end
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	-- 갈림길 주변은 큰 길 기울기를 0 으로 부드럽게 (단차 방지)
+	for _, plan in plans do
+		for _, jp in plan.joinPoints do
+			local R = plan.half + STYLE.junctionFlatRadius
+			for _, s in plan.samples do
+				local d = (Vector2.new(s.pos.X, s.pos.Z) - Vector2.new(jp.X, jp.Z)).Magnitude
+				if d < R then
+					local t = d / R
+					s.bank *= t * t * (3 - 2 * t)
+				end
+			end
+		end
+	end
+	return plans
 end
 
-local function buildRoute(parent: Instance, route, samples: { Sample }, opts: BuildOpts)
+----------------------------------------------------------------------
+-- 2단계: 깔기
+----------------------------------------------------------------------
+type Fill = { cf: CFrame, size: Vector3 }
+
+local function buildRoute(parent: Instance, plan: Plan, fills: { Fill })
+	local route = plan.route
 	local folder = Instance.new("Folder")
 	folder.Name = route.name
 	folder.Parent = parent
-	local W = opts.width
+	local samples = plan.samples
+	local W = plan.width
 	local S = STYLE.shoulder
-	local halfTotal = W / 2 + S
+	local half = plan.half
 
-	-- 누적 거리 (끝부분 차선 자르기용)
 	local cum = { 0 }
 	for i = 2, #samples do
 		cum[i] = cum[i - 1] + (samples[i].pos - samples[i - 1].pos).Magnitude
@@ -359,65 +467,52 @@ local function buildRoute(parent: Instance, route, samples: { Sample }, opts: Bu
 		end
 		local bank = (A.bank + B.bank) / 2
 		local right, up, fwd = frame(a, b, bank)
-		-- 커브 바깥쪽 틈 메우기: 다음 조각과 꺾인 각도만큼 길이를 늘림
+		-- 다음 조각과 꺾인 각도 (좌우 + 위아래). 꺾일수록 더 겹쳐서 틈 없게
 		local nextS = samples[i + 2]
 		local turn = 0
 		if nextS then
-			local f2 = (nextS.pos - b)
+			local f2 = nextS.pos - b
 			if f2.Magnitude > 0.1 then
 				turn = math.acos(math.clamp(fwd:Dot(f2.Unit), -1, 1))
 			end
 		end
-		local extra = 0.6 + halfTotal * turn
+		local L = len + 1 + half * turn
 		local mid = (a + b) / 2
-		local function cf(offsetRight: number, offsetUp: number): CFrame
-			local p = mid + right * offsetRight + up * (offsetUp + opts.lower)
-			return CFrame.fromMatrix(p, right, up, -fwd)
+		local function cf(offRight: number, offUp: number): CFrame
+			return CFrame.fromMatrix(mid + right * offRight + up * (offUp + plan.lower), right, up, -fwd)
 		end
-		local L = len + extra
-		local inTrim = cum[i] < opts.trimStart or (totalLen - cum[i + 1]) < opts.trimEnd
-		local atOpening = nearOpening(mid, opts.openings)
+		local inTrim = cum[i] < plan.trimStart or (totalLen - cum[i + 1]) < plan.trimEnd
+		local opening = A.opening or B.opening
+		local isBridge = A.bridge or B.bridge or A.under or B.under
 
-		-- 아스팔트 (윗면 = 도로 면)
-		newPart(folder, "Road", Vector3.new(W, 1, L), cf(0, -0.5), STYLE.asphalt, Enum.Material.SmoothPlastic)
-		-- 잔디 갓길 (아스팔트보다 살짝 아래, 양옆으로 넓게)
-		newPart(folder, "Shoulder", Vector3.new(W + S * 2, 1, L), cf(0, -0.55), STYLE.grass, Enum.Material.SmoothPlastic)
+		-- 아스팔트는 두껍게(2) → 위아래로 꺾이는 곳에서도 틈이 안 보임
+		newPart(folder, "Road", Vector3.new(W, 2, L), cf(0, -1), STYLE.asphalt)
+		newPart(folder, "Shoulder", Vector3.new(W + S * 2, 2, L), cf(0, -1.05), STYLE.grass)
 		if not inTrim then
-			-- 흰 테두리선 (갈림길 입구에선 끊김)
-			if not atOpening then
+			if not opening then
 				for _, side in { -1, 1 } do
 					newPart(folder, "EdgeLine", Vector3.new(0.6, 0.08, L), cf(side * (W / 2 - 1.2), 0.04), STYLE.whiteLine)
 				end
 			end
-			-- 노란 중앙 점선 (한 조각 건너 하나)
 			if i % 2 == 0 then
 				newPart(folder, "CenterDash", Vector3.new(0.6, 0.08, len * 0.7), cf(0, 0.04), STYLE.yellowLine)
 			end
 		end
 
-		-- 아래: 다리는 바닥판, 아니면 바닥까지 내려가는 둑
-		local roadY = mid.Y
-		local heightAboveGround = roadY - STYLE.groundY
-		if A.bridge or B.bridge then
-			newPart(folder, "Deck", Vector3.new(W + S * 2, 2, L), cf(0, -2), STYLE.pillar, Enum.Material.Concrete)
-		elseif heightAboveGround > 1.2 then
-			-- 둑 윗면은 도로의 가장 낮은 가장자리보다 아래 (기울어진 커브에서 둑이 튀어나오지 않게)
-			local lowEdgeDrop = halfTotal * math.sin(math.rad(math.abs(bank))) + 1.2
-			local top = roadY - lowEdgeDrop
+		if isBridge then
+			newPart(folder, "Deck", Vector3.new(W + S * 2, 2, L), cf(0, -3), STYLE.deck, Enum.Material.Concrete)
+		elseif route.fill ~= false and mid.Y - STYLE.groundY > 2 then
+			local top = mid.Y - half * math.sin(math.rad(math.abs(bank))) - 3
 			local bottom = STYLE.groundY - 2
-			if top > bottom + 0.5 then
+			local flat = Vector3.new(fwd.X, 0, fwd.Z)
+			if top > bottom + 2 and flat.Magnitude > 0.01 then
 				local center = Vector3.new(mid.X, (top + bottom) / 2, mid.Z)
-				local flatFwd = Vector3.new(fwd.X, 0, fwd.Z)
-				if flatFwd.Magnitude > 0.01 then
-					local flatCF = CFrame.lookAt(center, center + flatFwd.Unit)
-					newPart(folder, "Bank", Vector3.new(W + S * 2 - 1, top - bottom, L), flatCF, STYLE.cliff, Enum.Material.SmoothPlastic)
-				end
+				table.insert(fills, { cf = CFrame.lookAt(center, center + flat.Unit), size = Vector3.new(W + S * 2 + 6, top - bottom, L + 2) })
 			end
 		end
 
-		-- 가드레일: 다리, 기울어진 커브, 높은 구간 (갈림길 입구/붙는 끝부분은 비움)
-		local needRail = A.bridge or B.bridge or math.abs(bank) > 3 or heightAboveGround > STYLE.railHeight
-		if needRail and not inTrim and not atOpening then
+		local needRail = route.rails == true or isBridge or math.abs(bank) > 3
+		if route.rails ~= false and needRail and not inTrim and not opening then
 			for _, side in { -1, 1 } do
 				local x = side * (W / 2 + S - 1)
 				newPart(folder, "Rail", Vector3.new(0.4, 0.9, L), cf(x, 2.4), STYLE.rail, Enum.Material.Metal)
@@ -427,97 +522,32 @@ local function buildRoute(parent: Instance, route, samples: { Sample }, opts: Bu
 			end
 		end
 	end
-	return #samples
 end
 
--- 1단계: 모든 길의 모양을 먼저 계산 (갈림길이 붙을 위치 확정)
-local function planRoutes()
-	local plans = {}
-	local byName = {}
-	for _, route in ROUTES do
-		local width = route.width or STYLE.roadWidth
-		local resolved = {}
-		local trimStart, trimEnd = 0, 0
-		for idx, p in route.points do
-			if p.join then
-				local target = byName[p.join]
-				assert(target, "[RoadBuilder] '" .. route.name .. "' 가 붙으려는 길 '" .. tostring(p.join) .. "' 이 먼저 정의돼야 해요")
-				local best, bestD = nil, math.huge
-				for _, s in target.samples do
-					local d = (Vector2.new(s.pos.X, s.pos.Z) - Vector2.new(p.near[1] * MAP_SCALE, p.near[2] * MAP_SCALE)).Magnitude
-					if d < bestD then
-						best, bestD = s, d
-					end
-				end
-				table.insert(resolved, { best.pos.X, best.pos.Y, best.pos.Z, bank = 0 })
-				-- 붙는 큰 길 쪽: 입구 근처 가드레일/테두리선 비우기
-				table.insert(target.openings, { pos = best.pos, radius = width / 2 + STYLE.shoulder + 12 })
-				-- 이 길 쪽: 큰 길 위로 겹치는 끝부분엔 차선 안 그림
-				local cut = target.width / 2 + STYLE.shoulder + 4
-				if idx == 1 then
-					trimStart = cut
-				elseif idx == #route.points then
-					trimEnd = cut
-				end
-			else
-				-- 맵 규모 적용
-				local q = table.clone(p)
-				q[1], q[2], q[3] = p[1] * MAP_SCALE, p[2] * HEIGHT_SCALE, p[3] * MAP_SCALE
-				table.insert(resolved, q)
-			end
-		end
-		local r = table.clone(route)
-		r.points = resolved
-		local plan = {
-			route = r,
-			samples = sampleRoute(r),
-			width = width,
-			trimStart = trimStart,
-			trimEnd = trimEnd,
-			lower = ((trimStart > 0 or trimEnd > 0) and -0.06 or 0) + (route.lowerExtra or 0),
-			openings = {},
-		}
-		byName[route.name] = plan
-		table.insert(plans, plan)
-	end
-	-- 갈림길이 붙는 곳 주변은 큰 길 기울기를 0 으로 부드럽게 펴줌 (기울어진 길에 평평한 길이 붙으면 단차가 생겨 못 지나감)
-	for _, plan in plans do
-		for _, o in plan.openings do
-			local R = o.radius + STYLE.junctionFlatRadius
-			for _, s in plan.samples do
-				local d = (Vector2.new(s.pos.X, s.pos.Z) - Vector2.new(o.pos.X, o.pos.Z)).Magnitude
-				if d < R then
-					local t = d / R
-					s.bank *= t * t * (3 - 2 * t)
-				end
-			end
-		end
-	end
-	return plans
-end
-
--- ===== 중앙 도시 (O 자 도로 안쪽) =====
+----------------------------------------------------------------------
+-- 중앙 도시
+----------------------------------------------------------------------
 local CITY = {
-	lotSpacing = 78, -- 건물 자리 간격
-	streetClear = 50, -- 십자 도로 중심선에서 이만큼은 비움
-	edgeClear = 75, -- O 자 도로 안쪽 가장자리에서 이만큼은 비움
+	lotSpacing = 82,
+	streetClear = 50,
+	edgeClear = 70,
 	minHeight = 35,
-	maxHeight = 150,
+	maxHeight = 160,
 	colors = {
-		Color3.fromRGB(120, 215, 210), -- 민트
-		Color3.fromRGB(250, 170, 140), -- 살구
-		Color3.fromRGB(170, 160, 240), -- 라벤더
-		Color3.fromRGB(250, 220, 130), -- 크림 옐로
-		Color3.fromRGB(140, 190, 250), -- 하늘
-		Color3.fromRGB(240, 150, 180), -- 핑크
-		Color3.fromRGB(235, 235, 240), -- 흰색
+		Color3.fromRGB(120, 215, 210),
+		Color3.fromRGB(250, 170, 140),
+		Color3.fromRGB(170, 160, 240),
+		Color3.fromRGB(250, 220, 130),
+		Color3.fromRGB(140, 190, 250),
+		Color3.fromRGB(240, 150, 180),
+		Color3.fromRGB(235, 235, 240),
 	},
 	window = Color3.fromRGB(45, 80, 190),
 	roof = Color3.fromRGB(90, 95, 110),
 	plaza = Color3.fromRGB(205, 200, 190),
 }
 
-local function makeSign(parent: Instance, cf: CFrame, size: Vector3, text: string, bg: Color3, fg: Color3): Part
+local function makeSign(parent: Instance, cf: CFrame, size: Vector3, text: string, bg: Color3, fg: Color3)
 	local board = newPart(parent, "Sign", size, cf, bg)
 	for _, face in { Enum.NormalId.Front, Enum.NormalId.Back } do
 		local sg = Instance.new("SurfaceGui")
@@ -534,25 +564,23 @@ local function makeSign(parent: Instance, cf: CFrame, size: Vector3, text: strin
 		label.Parent = sg
 		sg.Parent = board
 	end
-	return board
 end
 
 local function makeBuilding(parent: Instance, base: Vector3, w: number, d: number, h: number, color: Color3)
 	local m = Instance.new("Model")
 	m.Name = "Building"
-	newPart(m, "Body", Vector3.new(w, h, d), CFrame.new(base + Vector3.new(0, h / 2, 0)), color, Enum.Material.SmoothPlastic)
-	-- 창문 띠 (건물을 한 바퀴 두르는 얇은 파란 띠)
+	newPart(m, "Body", Vector3.new(w, h, d), CFrame.new(base + Vector3.new(0, h / 2, 0)), color)
 	local y = 10
 	while y < h - 6 do
 		newPart(m, "Windows", Vector3.new(w + 0.4, 4, d + 0.4), CFrame.new(base + Vector3.new(0, y, 0)), CITY.window, Enum.Material.Glass)
 		y += 13
 	end
-	newPart(m, "Roof", Vector3.new(w + 2, 2, d + 2), CFrame.new(base + Vector3.new(0, h + 1, 0)), CITY.roof, Enum.Material.SmoothPlastic)
+	newPart(m, "Roof", Vector3.new(w + 2, 2, d + 2), CFrame.new(base + Vector3.new(0, h + 1, 0)), CITY.roof)
 	m.Parent = parent
 end
 
--- 딜러샵: 유리 전시장 + 간판 + 차 전시대 3개 (나중에 상점 UI 를 여기에 연결: Attribute DealerShop)
-local function makeDealer(parent: Instance, base: Vector3, facing: Vector3): Model
+-- 딜러샵: 유리 전시장 + 간판 + 차 전시대 3개 (상점 UI 연결용 Attribute: DealerShop, DisplaySlot)
+local function makeDealer(parent: Instance, base: Vector3, facing: Vector3)
 	local m = Instance.new("Model")
 	m.Name = "DealerShop"
 	m:SetAttribute("DealerShop", true)
@@ -561,45 +589,37 @@ local function makeDealer(parent: Instance, base: Vector3, facing: Vector3): Mod
 	local function at(x: number, y: number, z: number): CFrame
 		return look * CFrame.new(x, y, z)
 	end
-	-- 바닥 전시장
-	newPart(m, "Floor", Vector3.new(W, 1, D), at(0, 0.5, 0), Color3.fromRGB(235, 235, 240), Enum.Material.SmoothPlastic)
-	-- 뒷벽, 옆벽 (앞은 유리)
+	newPart(m, "Floor", Vector3.new(W, 1, D), at(0, 0.5, 0), Color3.fromRGB(235, 235, 240))
 	newPart(m, "BackWall", Vector3.new(W, H, 2), at(0, H / 2, D / 2), Color3.fromRGB(40, 45, 60))
 	newPart(m, "SideWall", Vector3.new(2, H, D), at(-W / 2, H / 2, 0), Color3.fromRGB(40, 45, 60))
 	newPart(m, "SideWall", Vector3.new(2, H, D), at(W / 2, H / 2, 0), Color3.fromRGB(40, 45, 60))
 	local glass = newPart(m, "Glass", Vector3.new(W, H - 6, 0.6), at(0, (H - 6) / 2 + 1, -D / 2), Color3.fromRGB(170, 220, 255), Enum.Material.Glass)
 	glass.Transparency = 0.6
-	glass.CanCollide = false -- 들어가서 구경할 수 있게
-	newPart(m, "Roof", Vector3.new(W + 4, 3, D + 4), at(0, H + 1.5, 0), Color3.fromRGB(255, 190, 40), Enum.Material.SmoothPlastic)
+	glass.CanCollide = false
+	newPart(m, "Roof", Vector3.new(W + 4, 3, D + 4), at(0, H + 1.5, 0), Color3.fromRGB(255, 190, 40))
 	makeSign(m, at(0, H + 9, -D / 2 - 1), Vector3.new(W * 0.8, 10, 1), "CAR DEALER", Color3.fromRGB(255, 190, 40), Color3.fromRGB(30, 30, 40))
-	-- 차 전시대 (빙글 도는 원판은 나중에)
 	for k = -1, 1 do
 		local pad = newPart(m, "DisplayPad", Vector3.new(1, 22, 22), at(k * 34, 1.2, 4) * CFrame.Angles(0, 0, math.rad(90)), Color3.fromRGB(80, 220, 255), Enum.Material.Neon)
 		pad.Shape = Enum.PartType.Cylinder
 		pad:SetAttribute("DisplaySlot", k + 2)
 	end
 	m.Parent = parent
-	return m
 end
 
 local function buildCity(map: Instance): CFrame
 	local city = Instance.new("Folder")
 	city.Name = "City"
 	city.Parent = map
-	local c = Vector3.new(RING_CENTER.X * MAP_SCALE, RING_CENTER.Y * HEIGHT_SCALE, RING_CENTER.Z * MAP_SCALE)
-	local ringR = RING_RADIUS * MAP_SCALE
-	local innerR = ringR - 23 - STYLE.shoulder -- O 자 도로 안쪽 갓길 끝
+	local c = CITY_CENTER
+	local innerR = RING_RADIUS - 23 - STYLE.shoulder
 
-	-- 도시 바닥 (O 자 도로 높이에 맞춘 둥근 대지)
 	local plateau = newPart(city, "Plateau", Vector3.new(c.Y - STYLE.groundY + 2, innerR * 2 + 4, innerR * 2 + 4),
 		CFrame.new(c.X, (c.Y + STYLE.groundY) / 2 - 1.05, c.Z) * CFrame.Angles(0, 0, math.rad(90)), CITY.plaza, Enum.Material.Concrete)
 	plateau.Shape = Enum.PartType.Cylinder
 
-	-- 딜러샵: 남쪽 길 입구 동쪽
-	local dealerBase = c + Vector3.new(105, 0, ringR * 0.55)
-	makeDealer(city, dealerBase, Vector3.new(-1, 0, 0)) -- 유리 앞면이 남북 도로를 바라봄
+	local dealerBase = c + Vector3.new(105, 0, RING_RADIUS * 0.55)
+	makeDealer(city, dealerBase, Vector3.new(-1, 0, 0))
 
-	-- 빌딩: 격자 자리마다 (도로/딜러샵 자리는 비움)
 	local rng = Random.new(1118)
 	local buildings = Instance.new("Folder")
 	buildings.Name = "Buildings"
@@ -608,44 +628,82 @@ local function buildCity(map: Instance): CFrame
 	for gx = -reach, reach, CITY.lotSpacing do
 		for gz = -reach, reach, CITY.lotSpacing do
 			local p = Vector3.new(gx, 0, gz)
-			if p.Magnitude > reach then
+			if p.Magnitude > reach or math.abs(gx) < CITY.streetClear or math.abs(gz) < CITY.streetClear then
 				continue
 			end
-			if math.abs(gx) < CITY.streetClear or math.abs(gz) < CITY.streetClear then
-				continue -- 십자 도로
-			end
 			if (c + p - dealerBase).Magnitude < 115 then
-				continue -- 딜러샵 자리
+				continue
 			end
-			local w = rng:NextInteger(36, 56)
-			local d = rng:NextInteger(36, 56)
-			local h = rng:NextInteger(CITY.minHeight, CITY.maxHeight)
-			makeBuilding(buildings, c + p, w, d, h, CITY.colors[rng:NextInteger(1, #CITY.colors)])
+			local w = rng:NextInteger(36, 58)
+			local d = rng:NextInteger(36, 58)
+			makeBuilding(buildings, c + p, w, d, rng:NextInteger(CITY.minHeight, CITY.maxHeight), CITY.colors[rng:NextInteger(1, #CITY.colors)])
 		end
 	end
 
-	-- 스폰: 딜러샵 앞 남북 도로 위, 북쪽(도시 가운데)을 바라봄
 	local spawnPos = Vector3.new(c.X, c.Y + 1, dealerBase.Z + 20)
 	return CFrame.lookAt(spawnPos, spawnPos + Vector3.new(0, 0, -1))
 end
 
--- ===== 다운힐 산 지형 (Terrain) =====
--- 가운데가 높은 원뿔 모양 언덕. 도로(둑)는 이 위에 올라감 (지형은 도로보다 항상 낮게 잡음)
-local function buildMountain()
+----------------------------------------------------------------------
+-- 지형: 고갯길 산 + 길 아래 채우기
+----------------------------------------------------------------------
+local function buildTerrain(fills: { Fill })
 	local terrain = workspace.Terrain
-	local c = Vector3.new(MOUNTAIN.center.X * MAP_SCALE, 0, MOUNTAIN.center.Z * MAP_SCALE)
-	local R = MOUNTAIN.radius * MAP_SCALE
-	local H = MOUNTAIN.height * HEIGHT_SCALE
-	local steps = 26
+	-- 고갯길 산: 꼭대기에서 멀어질수록 낮아지는 원뿔 (고갯길이 올라가는 비율과 같게 → 길을 덮지 않음)
+	local T = TOUGE
+	local runLen = (T.legs - 1) * T.advance + 120
+	local summit = T.base + T.dir * runLen
+	local slope = (T.summitY - T.base.Y) / runLen
+	local peakH = T.summitY - 40
+	local maxR = peakH / slope
+	local steps = 50
 	for k = 0, steps - 1 do
-		local r = R * (1 - k / steps)
-		local h = H * (k / steps) ^ 0.9 + 4 -- 바깥은 낮고 가운데로 갈수록 높게
-		local material = (k > steps * 0.75) and Enum.Material.Rock or Enum.Material.Grass
-		terrain:FillCylinder(CFrame.new(c.X, STYLE.groundY + h / 2 - 2, c.Z), h, r, material)
+		local r = maxR * (1 - k / steps)
+		local h = math.max(peakH - slope * r, 4)
+		local mat = (k > steps * 0.7) and Enum.Material.Rock or ((k > steps * 0.35) and Enum.Material.Ground or Enum.Material.Grass)
+		terrain:FillCylinder(CFrame.new(summit.X, STYLE.groundY + h / 2 - 2, summit.Z), h, r, mat)
+	end
+	for _, f in fills do
+		terrain:FillBlock(f.cf, f.size, Enum.Material.Grass)
 	end
 end
 
-function RoadBuilder.Build()
+----------------------------------------------------------------------
+-- 점검 보고
+----------------------------------------------------------------------
+local function report(plans: { Plan })
+	print("[RoadBuilder] ===== 길 점검 =====")
+	for _, plan in plans do
+		local maxGrade, bridges, openings = 0, 0, 0
+		local steepAt: Vector3? = nil
+		for i = 1, #plan.samples - 1 do
+			local a, b = plan.samples[i].pos, plan.samples[i + 1].pos
+			local horiz = (Vector2.new(a.X, a.Z) - Vector2.new(b.X, b.Z)).Magnitude
+			if horiz > 0.1 then
+				local g = math.deg(math.atan(math.abs(b.Y - a.Y) / horiz))
+				if g > maxGrade then
+					maxGrade, steepAt = g, a
+				end
+			end
+			if plan.samples[i].under then
+				bridges += 1
+			end
+			if plan.samples[i].opening then
+				openings += 1
+			end
+		end
+		print(string.format("  %-14s 최대 경사 %4.1f°%s  자동 다리 %d조각  입구 %d조각", plan.route.name, maxGrade,
+			maxGrade > STYLE.maxGradeWarn and " (가파름)" or "", bridges, openings))
+		if steepAt and maxGrade > STYLE.maxGradeWarn then
+			print(string.format("      가장 가파른 곳: (%d, %d, %d)", steepAt.X, steepAt.Y, steepAt.Z))
+		end
+	end
+	print(string.format("  경사 상한 %d° (이보다 가파른 곳은 자동으로 다듬어서 길이 끊기지 않음)", STYLE.maxGrade))
+end
+
+----------------------------------------------------------------------
+
+function RoadBuilder.Build(options: { keepTerrain: boolean? }?)
 	local recording = ChangeHistoryService:TryBeginRecording("RoadBuilder")
 	local existing = workspace:FindFirstChild("Map")
 	if existing then
@@ -653,34 +711,25 @@ function RoadBuilder.Build()
 		existing.Parent = game:GetService("ServerStorage")
 		warn("[RoadBuilder] 기존 맵을 ServerStorage." .. existing.Name .. " 로 옮겨 뒀어요 (지운 게 아님)")
 	end
+	if not (options and options.keepTerrain) then
+		workspace.Terrain:Clear()
+	end
 	workspace.StreamingEnabled = true
 
 	local map = Instance.new("Folder")
 	map.Name = "Map"
-
-	-- 바닥 (넓은 잔디)
-	newPart(map, "Ground", Vector3.new(9000, 4, 9000), CFrame.new(0, STYLE.groundY - 2, 0), STYLE.ground, Enum.Material.SmoothPlastic)
+	newPart(map, "Ground", Vector3.new(14000, 4, 14000), CFrame.new(0, STYLE.groundY - 2, 0), STYLE.ground)
 
 	local roads = Instance.new("Folder")
 	roads.Name = "Roads"
 	roads.Parent = map
-	local total = 0
-	-- 1단계: 모양 계산 (갈림길 위치 확정) → 2단계: 실제로 깔기 (입구엔 가드레일 비움)
-	for _, plan in planRoutes() do
-		total += buildRoute(roads, plan.route, plan.samples, {
-			width = plan.width,
-			trimStart = plan.trimStart,
-			trimEnd = plan.trimEnd,
-			lower = plan.lower,
-			openings = plan.openings,
-		})
+	local plans = planRoutes()
+	local fills: { Fill } = {}
+	for _, plan in plans do
+		buildRoute(roads, plan, fills)
 	end
 
-	-- 중앙 도시 + 딜러샵 (스폰 위치도 여기서 정함)
 	local spawnCF = buildCity(map)
-	-- 다운힐 산 지형 (이미 있는 지형은 그대로 두고 덧칠)
-	buildMountain()
-
 	local spawn = Instance.new("SpawnLocation")
 	spawn.Name = "MainSpawn"
 	spawn.Anchored = true
@@ -691,6 +740,8 @@ function RoadBuilder.Build()
 	spawn.Parent = map
 
 	map.Parent = workspace
+	buildTerrain(fills)
+
 	if recording then
 		ChangeHistoryService:FinishRecording(recording, Enum.FinishRecordingOperation.Commit)
 	end
@@ -700,7 +751,8 @@ function RoadBuilder.Build()
 			parts += 1
 		end
 	end
-	print(string.format("[RoadBuilder] 완료: 도로 조각 %d개, 파트 %d개. 스폰 = Map.MainSpawn", total, parts))
+	print(string.format("[RoadBuilder] 완료: 파트 %d개, 지형 채우기 %d곳. 스폰 = 도시 딜러샵 앞", parts, #fills))
+	report(plans)
 end
 
 return RoadBuilder

@@ -17,8 +17,9 @@ Studio 명령줄 (기존 Workspace.Map 은 ServerStorage 로 백업됨):
 require(game.ServerStorage.Tools.RoadBuilder:Clone()).Build()
 ```
 - 길 모양은 `src/tools/RoadBuilder.luau` 의 `ROUTES` 점만 고치면 됨 (다시 Build 하면 반영)
-- 맵 크기는 `MAP_SCALE`(가로) / `HEIGHT_SCALE`(높이) 하나로 조절
-- 산 지형(Terrain)은 Map 폴더 밖이라 백업/재생성 때 안 지워짐. 다시 만들기 전에 지우려면: `workspace.Terrain:Clear()`
+- 고갯길 경사/높이: `TOUGE` 의 `summitY`, `halfLeg` (짧을수록 가파름)
+- Build 할 때 지형(Terrain)을 새로 만듦 (지형 직접 손본 게 있으면 `Build({ keepTerrain = true })`)
+- 끝나면 Output 에 "길 점검" (길마다 최대 경사, 자동 다리, 입구 수)
 - 직접 손볼 땐 Workspace.Map.Roads 안의 조각을 움직이면 됨
 
 ## 1단계 확인할 것
