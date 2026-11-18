@@ -116,7 +116,7 @@ local modelScale = 1 -- 원본 모델 대비 지금 크기 (거리 값에 곱함
 local adsDist = 1.9 -- 이 무기의 조준 거리 (WeaponConfig.adsDistance)
 local hipCF = CFrame.new(1.05, -1.2, -2.5) -- 이 무기의 평소 위치 (WeaponConfig.vmHip)
 local adsRollRad = 0 -- 조준할 때 꺾는 각도 (리볼버 45°)
-local oneHanded = false -- 한손 파지 (왼손은 장전 때만)
+local oneHandedAds = false -- 조준하면 한손 (리볼버): 왼손이 빠지고 오른팔만 쭉
 local speedLoader: Model? = nil -- 리볼버 스피드로더 (장전 때만 보임)
 local cylSpinV = 0 -- 리볼버 실린더 헛도는 속도 (라디안/초, 점점 줄어듦)
 local cylLength, loaderLength = 0.4, 0.22 -- 실린더 길이, 스피드로더 길이 (스피드로더를 실린더 뒤에 딱 맞게)
@@ -124,6 +124,17 @@ local chamberRadius = 0.066 -- 실린더 축에서 약실까지 거리 (README �
 local chamberRound: BasePart? = nil -- 스나 약실 탄환 (볼트 젖혔을 때만 보임)
 local chamberLocal = CFrame.identity
 local boltHandleLocal: Vector3? = nil -- 볼트 손잡이 끝 (오른손이 잡으러 가는 곳)
+local rSmooth: Vector3? = nil -- 부드럽게 따라가는 손 위치 (총 기준)
+local lSmooth: Vector3? = nil
+type CylRound = { part: BasePart, idx: number } -- 리볼버 실린더 약실 탄 (쏘면 빈 탄피 색)
+local cylRounds: { CylRound } = {}
+local cylSpent = { false, false, false, false, false, false } -- 약실별 쏜 탄 (빈 탄피)
+
+-- 지금 맨 위(총열 앞)에 있는 약실 번호 (실린더가 60°씩 돌 때마다 바뀜)
+local function topChamber(angle: number): number
+	local steps = math.floor(angle / math.rad(60) + 0.5)
+	return (-steps) % 6
+end
 local hasGrip = false
 type ArmSet = { hand: BasePart?, fore: BasePart?, single: BasePart?, singleLen: number?, foreLen: number? }
 local rightArm: ArmSet = {}
@@ -398,7 +409,7 @@ function ViewModel.Set(weaponId: string)
 	adsDist = def and def.adsDistance or VM.adsDistance
 	hipCF = (def and def.vmHip) and CFrame.new(def.vmHip) or VM.hip
 	adsRollRad = math.rad(def and def.adsRoll or 0)
-	oneHanded = def ~= nil and def.oneHanded == true
+	oneHandedAds = def ~= nil and def.oneHandedAds == true
 	modelScale = 1
 	if math.abs(len - want) > 0.05 then
 		local s = want / len
@@ -565,6 +576,7 @@ function ViewModel.Set(weaponId: string)
 		ring.Material = Enum.Material.Metal
 		ring.CFrame = CFrame.Angles(0, math.pi / 2, 0) -- 원통 축 = Z (총열 방향)
 		setupPart(ring)
+		ring.Name = "Ring"
 		ring.Parent = sl
 		for i = 0, 5 do
 			local a = i * math.pi / 3 + math.pi / 2 -- 맨 위 약실부터 (README: 맨 위가 총열과 일직선)
@@ -577,11 +589,31 @@ function ViewModel.Set(weaponId: string)
 			round.CFrame = CFrame.new(math.cos(a) * chamberRadius, math.sin(a) * chamberRadius, -(loaderLength + cylLength * 0.9) / 2)
 				* CFrame.Angles(0, math.pi / 2, 0)
 			setupPart(round)
+			round.Name = "Round"
 			round.Parent = sl
 		end
 		sl.WorldPivot = CFrame.identity -- 기준 = 링 가운데, 축 = Z
 		sl.Parent = m
 		speedLoader = sl
+		-- 실린더 약실 탄 6발: 실린더와 같이 돌고 열림 (실린더 움직임 목록에 같이 넣음)
+		--   맨 위(총열과 일직선)가 0번. 쏘면 그 칸이 빈 탄피 색으로
+		table.clear(cylRounds)
+		for i = 0, 5 do
+			local a = math.pi / 2 + i * math.pi / 3
+			local rnd = Instance.new("Part")
+			rnd.Name = "CylRound"
+			rnd.Shape = Enum.PartType.Cylinder
+			rnd.Size = Vector3.new(cylLength * 0.98, roundDiam * 0.95, roundDiam * 0.95)
+			rnd.Color = Color3.fromRGB(225, 175, 70)
+			rnd.Material = Enum.Material.Metal
+			setupPart(rnd)
+			rnd.Parent = m
+			local rel = CFrame.new(cylSet.pivot + Vector3.new(math.cos(a) * chamberRadius, math.sin(a) * chamberRadius, 0.01 * S))
+				* CFrame.Angles(0, math.pi / 2, 0)
+			table.insert(cylSet.parts, { part = rnd, rel = rel })
+			table.insert(cylRounds, { part = rnd, idx = i })
+		end
+		cylSpent = { false, false, false, false, false, false }
 	end
 	m.Parent = workspace.CurrentCamera
 	current = m
@@ -592,12 +624,16 @@ function ViewModel.Set(weaponId: string)
 	inX, inY, inZ = newSpring(), newSpring(), newSpring()
 	lastCamPos, lastCamVel, accSmooth = nil, Vector3.zero, Vector3.zero
 	prevReload, prevBolt = 0, 0
+	rSmooth, lSmooth = nil, nil
 end
 
 -- 쏠 때: 스프링에 "탁" 충격 (strength 1 = 한 발 세게, 연사는 작게)
 function ViewModel.Kick(strength: number?)
 	local s = strength or 1
 	lastKick = os.clock()
+	if #cylRounds > 0 then
+		cylSpent[topChamber(cylTarget) + 1] = true -- 지금 총열 앞 약실을 쐈음 → 빈 탄피
+	end
 	cylTarget += math.rad(VM.cylinderStep) -- 리볼버 실린더 한 칸
 	kickZ.v += VM.kickBack * 60 * s
 	kickP.v += VM.kickUp * 60 * s
@@ -662,14 +698,18 @@ local function placeArm(set: ArmSet, handPos: Vector3, shoulder: Vector3, camCF:
 		return
 	end
 	local upDir = toShoulder / dist
-	local right
+	-- 비틀림 기준: 총 오른쪽(팔 축에 수직 성분)과 카메라 기준을 부드럽게 섞음 (갑자기 휙 바뀌지 않게)
+	local camRight = upDir:Cross(camCF.LookVector)
+	camRight = camRight.Magnitude > 0.01 and camRight.Unit or camCF.RightVector
+	local right = camRight
 	if twistRef then
-		right = twistRef - upDir * twistRef:Dot(upDir) -- 팔 축에 수직인 총 오른쪽
+		local proj = twistRef - upDir * twistRef:Dot(upDir)
+		if proj.Magnitude > 0.001 then
+			local w = math.clamp(proj.Magnitude / 0.5, 0, 1)
+			right = proj.Unit * w + camRight * (1 - w)
+		end
 	end
-	if not right or right.Magnitude < 0.05 then
-		right = upDir:Cross(camCF.LookVector)
-	end
-	right = right.Magnitude > 0.01 and right.Unit or camCF.RightVector
+	right = right.Magnitude > 0.01 and right.Unit or camRight
 	local function orient(center: Vector3): CFrame
 		return CFrame.fromMatrix(center, right, upDir)
 	end
@@ -771,7 +811,9 @@ function ViewModel.Update(cam: Camera, state)
 	local cylOpen = 0 -- 리볼버 실린더 열림 (0~1)
 	local leftTarget: Vector3? = nil -- 왼손을 여기로 (손잡이 기준)
 	local rightTarget: Vector3? = nil -- 오른손을 여기로 (손잡이 기준, 콜라캔 옮길 때)
-	local showLeft = not oneHanded
+	local showLeft = true
+	local leftAwayAmt = 0 -- 왼손이 총에서 떨어져 아래로 빠지는 정도 (AK 한손 탁)
+	local refillCyl = false -- 이번 프레임에 스피드로더로 실린더를 채움
 	local rPull, rLift = 0, 0 -- 장전 중 볼트/노리쇠 당김, 손잡이 들기
 	local chamberShow = false -- 스나 약실 탄환 보이기
 	local function crossed(x: number): boolean
@@ -789,6 +831,8 @@ function ViewModel.Update(cam: Camera, state)
 	if state.reload and style == "ak" then
 		-- 1) 반대로 살짝 준비(0~0.06) → "/" 방향(총 위쪽이 오른쪽)으로 탁 쳐서 탄창 날리기(0.09)
 		-- 2) 부드럽게 쏘는 자세(I)로 복귀(0.1~0.26)
+		-- 한손으로 탁: 왼손은 먼저 총에서 떼서 아래로 (새 탄창 가지러 갈 때까지)
+		leftAwayAmt = smooth(0, 0.05, r) * (1 - smooth(0.2, 0.26, r))
 		local wind = smooth(0, 0.06, r) * (1 - smooth(0.06, 0.085, r))
 		local snap = smooth(0.06, 0.095, r) * (1 - smooth(0.11, 0.26, r))
 		-- 손목이 아니라 팔꿈치(손 아래 뒤쪽)를 축으로 → 총과 손이 같이 휙 쓸려 감 (한손으로 탁 꺾기)
@@ -870,11 +914,11 @@ function ViewModel.Update(cam: Camera, state)
 		end
 	elseif state.reload and style == "revolver" then
 		-- 1) "/" 반대 방향(총 위쪽이 왼쪽)으로 탁 쳐서 실린더 열고 휙 돌림 (0~0.08)
-		local snapOpen = smooth(0, 0.05, r) * (1 - smooth(0.08, 0.16, r))
+		local snapOpen = smooth(0, 0.025, r) * (1 - smooth(0.05, 0.12, r)) -- 한 번에 탁 (짧고 절도 있게)
 		-- 팔꿈치 축으로 팔째 탁 (총만 꺾이지 않게)
 		local elbow = Vector3.new(0, -0.9 * S0, 1.0 * S0)
 		cf *= aboutPoint(elbow, CFrame.Angles(math.rad(-6) * snapOpen, 0, math.rad(42) * snapOpen))
-		cylOpen = backOut(math.clamp((r - 0.03) / 0.05, 0, 1)) * (1 - smooth(0.67, 0.7, r))
+		cylOpen = backOut(math.clamp((r - 0.015) / 0.035, 0, 1)) * (1 - smooth(0.67, 0.7, r))
 		if crossed(0.04) then
 			jolt(0.02, -0.06, 0.18)
 			cylSpinV = 18 -- 열리면서 촤라락 돎
@@ -897,9 +941,13 @@ function ViewModel.Update(cam: Camera, state)
 		end
 		if crossed(0.53) then
 			jolt(0.12, -0.04, 0) -- 콕
+			refillCyl = true -- 탄이 스피드로더에서 실린더로
 		end
 		if crossed(0.61) and speedLoader then
-			throwModel(speedLoader, -cam.CFrame.RightVector * 7 - Vector3.yAxis * 4, Vector3.new(3, 5, 0)) -- 버림
+			local ringPart = speedLoader:FindFirstChild("Ring")
+			if ringPart and ringPart:IsA("BasePart") then
+				throwParts({ { part = ringPart, world = ringPart.CFrame } }, -cam.CFrame.RightVector * 7 - Vector3.yAxis * 4, Vector3.new(3, 5, 0)) -- 빈 링만 버림
+			end
 		end
 		-- 4) 내리면서 "/" 방향(총 위쪽이 오른쪽)으로 탁 쳐서 실린더 닫기 (0.68) → 살짝 돎 → 제자리
 		local snapClose = smooth(0.64, 0.69, r) * (1 - smooth(0.72, 0.85, r))
@@ -1009,7 +1057,22 @@ function ViewModel.Update(cam: Camera, state)
 	if cylSet then
 		cylTarget += cylSpinV * dt
 		cylSpinV -= cylSpinV * math.min(dt * 3, 1)
+		-- 헛돌던 게 멈추면 60° 칸에 딱 맞춰 섬 (약실이 총열과 일직선)
+		if math.abs(cylSpinV) < 0.4 then
+			local stepA = math.rad(VM.cylinderStep)
+			local snapT = math.floor(cylTarget / stepA + 0.5) * stepA
+			cylTarget += (snapT - cylTarget) * math.min(dt * 12, 1)
+		end
 		cylAngle += (cylTarget - cylAngle) * math.min(dt * 30, 1)
+		-- 약실 탄: 쏜 칸은 빈 탄피 색, 장전 중 쏟은 뒤 ~ 스피드로더 꽂기 전엔 비어 있음
+		if refillCyl then
+			cylSpent = { false, false, false, false, false, false } -- 스피드로더로 새 탄 6발
+		end
+		local emptyNow = style == "revolver" and r >= 0.24 and r < 0.53
+		for _, cr in cylRounds do
+			cr.part.LocalTransparencyModifier = emptyNow and 1 or 0
+			cr.part.Color = cylSpent[cr.idx + 1] and Color3.fromRGB(110, 85, 55) or Color3.fromRGB(225, 175, 70)
+		end
 		local swing
 		if hingeLocal then
 			swing = hingeLocal * CFrame.Angles(0, 0, math.rad(VM.cylinderSwing) * cylOpen) * hingeLocal:Inverse()
@@ -1082,7 +1145,9 @@ function ViewModel.Update(cam: Camera, state)
 		end
 		for _, d in speedLoader:GetDescendants() do
 			if d:IsA("BasePart") then
-				d.LocalTransparencyModifier = loaderPose and 0 or 1
+				-- 링은 장전 중 계속, 탄은 실린더에 꽂기 전까지만 (꽂으면 탄이 실린더로 옮겨감)
+				local isRound = d.Name == "Round"
+				d.LocalTransparencyModifier = (loaderPose and (not isRound or r < 0.53)) and 0 or 1
 			end
 		end
 	end
@@ -1117,15 +1182,33 @@ function ViewModel.Update(cam: Camera, state)
 		lHand = cf:PointToWorldSpace(leftTarget) -- 새 탄창 / 스피드로더를 쥔 왼손
 	end
 	local camCF = cam.CFrame
-	-- 한손 파지(리볼버): 오른팔은 더 쭉 뻗음
-	local rShoulder = oneHanded and Vector3.new(0.6, -1.9, 0.5) or Vector3.new(1.2, -2.2, 0.6)
+	-- 왼손이 총에서 떨어져 화면 아래로 빠진 자리 (한손 동작 / 리볼버 한손 조준)
+	local leftAway = camCF:PointToWorldSpace(Vector3.new(-0.9, -2.8, -1.2))
+	if leftAwayAmt > 0 and not leftTarget then
+		lHand = lHand:Lerp(leftAway, leftAwayAmt)
+	end
+	-- 리볼버: 조준하면 왼손이 스르륵 빠지고 한손 (장전 중 스피드로더 들 땐 예외)
+	if oneHandedAds and not leftTarget and adsBlend > 0.01 then
+		lHand = lHand:Lerp(leftAway, math.clamp(adsBlend, 0, 1))
+		if adsBlend > 0.92 then
+			showLeft = false
+		end
+	end
+	-- 손 위치를 총 기준으로 부드럽게 따라감 (목표가 바뀌어도 순간이동 없이 → 팔이 뚝뚝 끊기지 않음)
+	local k = 1 - math.exp(-dt * 22)
+	local rLocal, lLocal = cf:PointToObjectSpace(rHand), cf:PointToObjectSpace(lHand)
+	rSmooth = rSmooth and rSmooth:Lerp(rLocal, k) or rLocal
+	lSmooth = lSmooth and lSmooth:Lerp(lLocal, k) or lLocal
+	rHand, lHand = cf:PointToWorldSpace(rSmooth :: Vector3), cf:PointToWorldSpace(lSmooth :: Vector3)
+	-- 한손 조준(리볼버): 오른팔은 더 쭉 뻗음
+	local rShoulder = oneHandedAds and Vector3.new(0.6, -1.9, 0.5) or Vector3.new(1.2, -2.2, 0.6)
 	placeArm(rightArm, rHand, camCF:PointToWorldSpace(rShoulder:Lerp(Vector3.new(0.5, -1.8, 0.6), adsBlend)), camCF, cf.RightVector) -- 팔이 총과 같이 비틀림
 	if showLeft then
 		placeArm(leftArm, lHand, camCF:PointToWorldSpace(Vector3.new(-1.1, -2.2, -0.2):Lerp(Vector3.new(-0.8, -2, -0.3), adsBlend)), camCF, cf.RightVector)
 	else
 		for _, p in { leftArm.single, leftArm.fore, leftArm.hand } do
 			if p then
-				p.LocalTransparencyModifier = 1 -- 한손 파지: 왼손 안 보임
+				p.LocalTransparencyModifier = 1 -- 한손: 왼손 안 보임
 			end
 		end
 	end
