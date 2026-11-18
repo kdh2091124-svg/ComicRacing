@@ -655,7 +655,7 @@ local function enter(char: Model, vehicle: Model?)
 				reloadStart = nowT
 				-- 리볼버: 실린더가 열리면 빈 탄피 6개가 쏟아짐
 				if ViewModel.CylinderPosition() then
-					task.delay(def.reloadTime * 0.18, function() -- 총구 들어서 쏟는 순간
+					task.delay(def.reloadTime * 0.2, function() -- 쓱 올려서 쏟는 순간
 						local p = ViewModel.CylinderPosition()
 						if p then
 							for _ = 1, 6 do

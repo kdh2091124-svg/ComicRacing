@@ -60,8 +60,6 @@ local VM = {
 	canLift = 0.65, -- 장전: 컵에서 위로 뽑는 거리
 	canPush = 0.3, -- 장전: 포신 안으로 밀어 넣는 거리 (캔 길이 절반에 더해짐)
 	boltAnimPortion = 0.75, -- boltTime 중 볼트 동작이 차지하는 비율 (나머지는 제자리)
-	reloadBoltStart = 0.63, -- 장전 진행도 중 탄창 꽂은 뒤 노리쇠 후퇴→전진 시작
-	reloadBoltEnd = 0.86, -- 끝
 	sleeveColor = Color3.fromRGB(60, 70, 90), -- 팔을 못 가져올 때 대신 쓰는 색
 }
 ViewModel.Settings = VM
@@ -120,6 +118,9 @@ local hipCF = CFrame.new(1.05, -1.2, -2.5) -- 이 무기의 평소 위치 (Weapo
 local adsRollRad = 0 -- 조준할 때 꺾는 각도 (리볼버 45°)
 local oneHanded = false -- 한손 파지 (왼손은 장전 때만)
 local speedLoader: Model? = nil -- 리볼버 스피드로더 (장전 때만 보임)
+local cylSpinV = 0 -- 리볼버 실린더 헛도는 속도 (라디안/초, 점점 줄어듦)
+local chamberRound: BasePart? = nil -- 스나 약실 탄환 (볼트 젖혔을 때만 보임)
+local chamberLocal = CFrame.identity
 local hasGrip = false
 type ArmSet = { hand: BasePart?, fore: BasePart?, single: BasePart? }
 local rightArm: ArmSet = {}
@@ -167,6 +168,55 @@ local function localFX(): Folder
 		f.Parent = workspace
 	end
 	return f :: Folder
+end
+
+-- 파트 묶음을 지금 모양 그대로 복제해서 물리로 날림 (던진 탄창, 버린 스피드로더). 3초 뒤 사라짐
+local function throwParts(list: { { part: BasePart, world: CFrame } }, vel: Vector3, ang: Vector3)
+	local m = Instance.new("Model")
+	m.Name = "Thrown"
+	local first: BasePart? = nil
+	for _, e in list do
+		local c = e.part:Clone()
+		c.CFrame = e.world
+		c.Anchored = false
+		c.CanCollide = true
+		c.CanQuery = false
+		c.CanTouch = false
+		c.Massless = false
+		c.LocalTransparencyModifier = 0
+		c.Parent = m
+		if first then
+			local w = Instance.new("WeldConstraint")
+			w.Part0, w.Part1 = first, c
+			w.Parent = c
+		else
+			first = c
+		end
+	end
+	m.Parent = localFX()
+	if first then
+		first.AssemblyLinearVelocity = vel
+		first.AssemblyAngularVelocity = ang
+	end
+	game:GetService("Debris"):AddItem(m, 3)
+end
+
+local function throwSet(set: Moving, gripCF: CFrame, vel: Vector3, ang: Vector3)
+	local list = {}
+	for _, e in set.parts do
+		table.insert(list, { part = e.part, world = gripCF * e.rel })
+	end
+	throwParts(list, vel, ang)
+end
+
+local function throwModel(model: Model, vel: Vector3, ang: Vector3)
+	local list = {}
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") then
+			table.insert(list, { part = d, world = d.CFrame })
+		end
+	end
+	throwParts(list, vel, ang)
 end
 
 -- 총에 순간 충격 (장전 탁, 볼트 철컥): z = 뒤로, p = 총구 들림, r = 비틀림
@@ -443,6 +493,23 @@ function ViewModel.Set(weaponId: string)
 	m.Name = "ViewModel"
 	gun.Parent = m
 	cloneArms(m)
+	-- 볼트식(스나)이면 약실 탄환: 배출구 안쪽에 총열 방향으로 놓인 황동 탄 (볼트 젖혔을 때만 보임)
+	chamberRound = nil
+	cylSpinV = 0
+	if def and def.boltTime and ejectLocal then
+		local rnd = Instance.new("Part")
+		rnd.Name = "ChamberRound"
+		rnd.Shape = Enum.PartType.Cylinder
+		rnd.Size = Vector3.new(0.55, 0.12, 0.12) * modelScale
+		rnd.Color = Color3.fromRGB(225, 175, 70)
+		rnd.Material = Enum.Material.Metal
+		setupPart(rnd)
+		rnd.Parent = m
+		-- 배출구 위치에서 총 안쪽으로 살짝, 원통 축(X)을 총열(Z) 방향으로
+		chamberLocal = CFrame.new(ejectLocal.Position + Vector3.new(-0.04 * modelScale, -0.02 * modelScale, -0.05 * modelScale))
+			* CFrame.Angles(0, math.pi / 2, 0)
+		chamberRound = rnd
+	end
 	-- 리볼버면 스피드로더 (검은 링 + 황동 탄 6발) 만들어 둠 (장전 때만 보임)
 	speedLoader = nil
 	if cylSet then
@@ -638,114 +705,164 @@ function ViewModel.Update(cam: Camera, state)
 	local leftDrop = 0
 	local r = state.reload or 0
 	local S0 = modelScale
-	-- 장전 방식: 콜라캔(MagLoad) / 리볼버(Cylinder) / 탄창 던지기(Mag) / 기본
-	local style = magLoadLocal and "cola" or (cylSet and "revolver") or (magSet and "flip") or "basic"
+	-- 장전 방식: 콜라캔(MagLoad) / 리볼버(Cylinder) / 스나(Mag + 볼트식) / AK(Mag) / 기본
+	local style = magLoadLocal and "cola" or (cylSet and "revolver")
+		or (magSet and (state.boltAction and "sniper" or "ak")) or "basic"
 	local magMove: CFrame? = nil -- 새 탄창 위치 (손잡이 기준 이동)
 	local magHidden = false
 	local loaderPose: CFrame? = nil -- 스피드로더 위치 (손잡이 기준)
 	local cylOpen = 0 -- 리볼버 실린더 열림 (0~1)
 	local leftTarget: Vector3? = nil -- 왼손을 여기로 (손잡이 기준)
+	local rightTarget: Vector3? = nil -- 오른손을 여기로 (손잡이 기준, 콜라캔 옮길 때)
 	local showLeft = not oneHanded
+	local rPull, rLift = 0, 0 -- 장전 중 볼트/노리쇠 당김, 손잡이 들기
+	local chamberShow = false -- 스나 약실 탄환 보이기
 	local function crossed(x: number): boolean
 		return prevReload < x and r >= x
 	end
-	if state.reload and style == "flip" then
-		-- AR/스나: 총을 휙 돌림 → 탄창 옆으로 팍 던짐(진짜 날아감) → 왼손이 아래에서 새 탄창 → 탁 끼움 → 휙 복귀
-		local spin = math.min(backOut(math.clamp(r / 0.12, 0, 1)), 1 - backOut(math.clamp((r - 0.5) / 0.12, 0, 1)))
-		cf *= CFrame.new(0.12 * spin, 0.06 * spin, 0) * CFrame.Angles(math.rad(-12) * spin, math.rad(28) * spin, math.rad(72) * spin)
-		if crossed(0.13) and magSet then
-			-- 지금 탄창 모양 그대로 복제해서 옆으로 던짐
-			local thrown = Instance.new("Model")
-			thrown.Name = "ThrownMag"
-			local first: BasePart? = nil
-			for _, e in magSet.parts do
-				local c = e.part:Clone()
-				c.CFrame = cf * e.rel
-				c.Anchored = false
-				c.CanCollide = true
-				c.CanQuery = false
-				c.CanTouch = false
-				c.Massless = false
-				c.LocalTransparencyModifier = 0
-				c.Parent = thrown
-				if first then
-					local w = Instance.new("WeldConstraint")
-					w.Part0, w.Part1 = first, c
-					w.Parent = c
-				else
-					first = c
-				end
-			end
-			thrown.Parent = localFX()
-			if first then
-				first.AssemblyLinearVelocity = -cam.CFrame.RightVector * 26 + Vector3.yAxis * 9 + cam.CFrame.LookVector * 4
-				first.AssemblyAngularVelocity = Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5) * 30
-			end
-			game:GetService("Debris"):AddItem(thrown, 3)
-			jolt(0.04, -0.1, 0.18)
+	local function bump(a: number, b: number, c: number, d: number): number
+		return smooth(a, b, r) * (1 - smooth(c, d, r))
+	end
+	-- 새 탄창이 아래에서 올라와 끼워지는 이동 (off 1 = 아래 멀리, 0 = 제자리)
+	local function magFrom(off: number, push: number, side: number): CFrame
+		return CFrame.new(side * S0 * off, (-1.8 * off - 0.3 * (1 - push)) * S0, 0.3 * S0 * off)
+			* aboutPoint((magSet :: Moving).pivot, CFrame.Angles(math.rad(-35) * off, 0, math.rad(25) * off))
+	end
+
+	if state.reload and style == "ak" then
+		-- 1) 한손으로 왼쪽 탁 꺾기 + 탄창이 빙글빙글 돌며 슝 (0~0.1)  2) 쏘는 자세(I)로 복귀 (0.1~0.2)
+		local flick = backOut(math.clamp(r / 0.07, 0, 1)) * (1 - smooth(0.1, 0.2, r))
+		cf *= CFrame.new(-0.12 * flick, 0.05 * flick, 0) * CFrame.Angles(math.rad(-6) * flick, math.rad(10) * flick, math.rad(62) * flick)
+		if crossed(0.06) and magSet then
+			throwSet(magSet, cf, -cam.CFrame.RightVector * 30 + Vector3.yAxis * 9, cam.CFrame.LookVector * 28)
+			jolt(0.03, -0.06, 0.22)
 		end
-		if r >= 0.13 and r < 0.2 then
+		if r >= 0.06 and r < 0.2 then
 			magHidden = true
-		elseif r >= 0.2 and r < 0.46 and magSet then
-			local come = smooth(0.2, 0.37, r)
-			local push = smooth(0.37, 0.43, r)
-			local off = 1 - come
-			magMove = CFrame.new(-1.3 * S0 * off, (-1.9 * off - 0.35 * (1 - push)) * S0, 0.5 * S0 * off)
-				* aboutPoint(magSet.pivot, CFrame.Angles(math.rad(-45) * off, 0, math.rad(35) * off))
-			leftTarget = (magMove * CFrame.new(magSet.pivot)).Position + Vector3.new(0, -0.25 * S0, 0.05)
 		end
-		if crossed(0.43) then
-			jolt(0.24, 0.2, -0.12) -- 탁!
+		-- 3) 아래서 새 탄창 → 탁 (0.39) → 확인으로 한 번 더 강하게 탁! (0.46)
+		if r >= 0.2 and r < 0.5 and magSet then
+			magMove = magFrom(1 - smooth(0.2, 0.36, r), smooth(0.36, 0.39, r), -0.5)
+			local slap = bump(0.41, 0.43, 0.445, 0.46) -- 손을 살짝 내렸다가 위로 탁
+			leftTarget = (magMove * CFrame.new(magSet.pivot)).Position + Vector3.new(0, (-0.25 - 0.35 * slap) * S0, 0.05)
+		end
+		if crossed(0.39) then
+			jolt(0.12, 0.08, -0.05)
+		end
+		if crossed(0.46) then
+			jolt(0.28, 0.26, -0.12) -- 강하게 탁!
+		end
+		-- 4) 왼쪽으로 돌려서 왼손이 장전 손잡이 찰칵 (0.52~0.8)
+		local roll = smooth(0.5, 0.58, r) * (1 - smooth(0.8, 0.9, r))
+		cf *= CFrame.new(-0.1 * roll, 0.05 * roll, 0) * CFrame.Angles(math.rad(-4) * roll, math.rad(-14) * roll, math.rad(42) * roll)
+		rPull = smooth(0.62, 0.67, r) * (1 - smooth(0.69, 0.72, r))
+		if crossed(0.67) then
+			jolt(0.1, 0.04, 0.1) -- 찰칵 (당김)
+		end
+		if crossed(0.72) then
+			jolt(-0.07, -0.04, -0.06) -- 철컥 (놓음)
+		end
+		if r >= 0.52 and r < 0.8 and boltSet then
+			leftTarget = boltSet.pivot + Vector3.new(0.05, 0.12, (0.12 + VM.boltTravel * rPull) * S0)
+		end
+	elseif state.reload and style == "sniper" then
+		-- 탄창 쪽이 보이게 살짝 기울임
+		local tilt = smooth(0, 0.08, r) * (1 - smooth(0.42, 0.5, r))
+		cf *= CFrame.new(0, -0.1 * tilt, 0) * CFrame.Angles(math.rad(-6) * tilt, math.rad(12) * tilt, math.rad(-22) * tilt)
+		-- 1) 왼손이 탄창 버튼 딱 → 탄창이 빠져 떨어짐
+		if r < 0.12 and magSet then
+			leftTarget = magSet.pivot + Vector3.new(0, -0.1 * S0, -0.15 * S0)
+		end
+		if crossed(0.07) and magSet then
+			throwSet(magSet, cf, -Vector3.yAxis * 4 - cam.CFrame.RightVector * 2, Vector3.new(0, 0, 2))
+			jolt(0.02, -0.03, 0.04)
+		end
+		if r >= 0.07 and r < 0.16 then
+			magHidden = true
+		end
+		-- 2) 새 탄창 꽂기 (0.31) → 한 번 탁 쳐서 정확히 (0.39)
+		if r >= 0.16 and r < 0.44 and magSet then
+			local seat = smooth(0.36, 0.39, r)
+			magMove = magFrom(1 - smooth(0.16, 0.29, r), smooth(0.29, 0.32, r) * (0.8 + 0.2 * seat), -0.4)
+			local tap = bump(0.34, 0.36, 0.38, 0.4)
+			leftTarget = (magMove * CFrame.new(magSet.pivot)).Position + Vector3.new(0, (-0.22 - 0.25 * tap) * S0, 0)
+		end
+		if crossed(0.32) then
+			jolt(0.08, 0.05, 0)
+		end
+		if crossed(0.39) then
+			jolt(0.16, 0.12, -0.05)
+		end
+		-- 3) 볼트 강하게 촥 (0.5~0.57) → 잠깐 대기 (약실 탄환 보임) → 한 번에 탁 놓기 (0.74~0.77)
+		local roll = smooth(0.46, 0.52, r) * (1 - smooth(0.8, 0.9, r))
+		cf *= CFrame.Angles(math.rad(4) * roll, 0, math.rad(20) * roll) * CFrame.new(-0.05 * roll, -0.05 * roll, 0)
+		rLift = smooth(0.5, 0.53, r) * (1 - smooth(0.76, 0.785, r))
+		rPull = smooth(0.53, 0.57, r) * (1 - smooth(0.74, 0.765, r))
+		chamberShow = rPull > 0.6
+		if crossed(0.57) then
+			jolt(0.17, 0.06, -0.1) -- 촥
+		end
+		if crossed(0.77) then
+			jolt(-0.15, -0.08, 0.08) -- 탁
 		end
 	elseif state.reload and style == "revolver" then
-		-- 리볼버: 실린더 촥 열기 → 총구 들어 탄피 쏟기 → 스피드로더 꾹 → 손목 튕겨 촥 닫기
-		cylOpen = backOut(math.clamp((r - 0.02) / 0.07, 0, 1)) * (1 - smooth(0.74, 0.77, r))
-		local up = smooth(0.1, 0.2, r) * (1 - smooth(0.3, 0.38, r))
-		local load = smooth(0.34, 0.42, r) * (1 - smooth(0.7, 0.76, r))
-		local flick = smooth(0.73, 0.77, r) * (1 - smooth(0.79, 0.9, r))
-		cf *= CFrame.new(-0.1 * up, 0.35 * up, 0.25 * up) * CFrame.Angles(math.rad(70) * up, math.rad(-10) * up, math.rad(-15) * up)
-		cf *= CFrame.new(-0.35 * load, 0.15 * load, 0.3 * load) * CFrame.Angles(math.rad(-20) * load, math.rad(-25) * load, math.rad(-30) * load)
-		cf *= CFrame.Angles(0, 0, math.rad(45) * flick)
-		if crossed(0.03) then
-			jolt(0, 0.05, -0.14) -- 촥 열기
+		-- 1) 손목 꺾어 촥 내리기 → 실린더 빠지면서 살짝 헛돎 (0~0.1)
+		local down = backOut(math.clamp(r / 0.08, 0, 1)) * (1 - smooth(0.1, 0.18, r))
+		cf *= CFrame.new(-0.1 * down, -0.15 * down, 0) * CFrame.Angles(math.rad(-35) * down, 0, math.rad(25) * down)
+		cylOpen = backOut(math.clamp((r - 0.04) / 0.06, 0, 1)) * (1 - smooth(0.6, 0.63, r))
+		if crossed(0.05) then
+			jolt(0.02, -0.1, 0.16)
+			cylSpinV = 14 -- 열리면서 헛돎
 		end
-		if crossed(0.18) then
-			jolt(0.06, 0.12, 0) -- 탄피 쏟기 (탄피는 WeaponClient 가 뿌림)
+		-- 2) 바로 쓱 올려서 탄피 쏟기 (0.12~0.22), 올린 채로 유지
+		local up = smooth(0.12, 0.22, r) * (1 - smooth(0.55, 0.62, r))
+		cf *= CFrame.new(-0.15 * up, 0.3 * up, 0.25 * up) * CFrame.Angles(math.rad(72) * up, math.rad(-12) * up, math.rad(-12) * up)
+		if crossed(0.2) then
+			jolt(0.04, 0.1, 0) -- 탄피 쏟기 (탄피는 WeaponClient 가 뿌림)
 		end
-		if crossed(0.6) then
-			jolt(0.14, -0.05, 0) -- 꾹
-		end
-		if crossed(0.76) then
-			jolt(0.1, 0.06, 0.22) -- 촥 닫기
-		end
-		if r >= 0.42 and r < 0.68 and cylSet then
-			local come = smooth(0.42, 0.55, r)
-			local push = smooth(0.55, 0.6, r)
-			local away = smooth(0.62, 0.68, r)
+		-- 3) 올린 채로 스피드로더 (0.26~0.47) 꾹 → 껍데기 버리기 (0.52)
+		if r >= 0.26 and r < 0.52 and cylSet then
+			local come = smooth(0.26, 0.42, r)
+			local push = smooth(0.42, 0.47, r)
 			local swing = hingeLocal and (hingeLocal * CFrame.Angles(0, 0, math.rad(VM.cylinderSwing) * cylOpen) * hingeLocal:Inverse())
 				or aboutPoint(cylSet.pivot + Vector3.new(0, -0.12 * S0, 0), CFrame.Angles(0, 0, math.rad(VM.cylinderSwing) * cylOpen))
 			local rear = swing * CFrame.new(cylSet.pivot + Vector3.new(0, 0, (0.32 + 0.4 * (1 - push)) * S0))
-			loaderPose = rear * CFrame.new(-0.9 * S0 * (1 - come) - 0.5 * away, -1.2 * S0 * (1 - come) - 1.5 * away, 0.4 * S0 * (1 - come) + 0.3 * away)
-			leftTarget = loaderPose.Position + Vector3.new(0, -0.1, 0.2 * S0)
+			loaderPose = rear * CFrame.new(-0.6 * S0 * (1 - come), -0.3 * S0 * (1 - come), 1.2 * S0 * (1 - come))
+			leftTarget = loaderPose.Position + Vector3.new(0, -0.08, 0.15 * S0)
 			showLeft = true
 		end
-	elseif state.reload then
-		-- 기본/콜라캐논: 비틀며 들기(살짝 넘침) → (탄창 빼기) → 꽂기 → 탁 → 제자리
-		local tiltIn = backOut(math.clamp(r / 0.14, 0, 1))
-		local tiltOut = 1 - backOut(math.clamp((r - 0.86) / 0.14, 0, 1))
-		local tilt = math.min(tiltIn, tiltOut)
-		local out = smooth(0.14, 0.26, r) * (1 - smooth(0.46, 0.6, r))
-		cf *= CFrame.new(0.08 * tilt, -0.2 * tilt, 0.05 * tilt) * CFrame.Angles(math.rad(-8) * tilt, math.rad(18) * tilt, math.rad(38) * tilt)
-		leftDrop = out
-		if crossed(0.16) then
-			jolt(0, -0.08, 0.05)
+		if crossed(0.47) then
+			jolt(0.14, -0.05, 0) -- 꾹
 		end
-		if crossed(0.6) then
-			jolt(0.18, 0.14, -0.06)
+		if crossed(0.52) and speedLoader then
+			throwModel(speedLoader, -Vector3.yAxis * 6 - cam.CFrame.RightVector * 3, Vector3.new(4, 2, 0))
 		end
-	end
-	if state.reload and style == "cola" then
+		-- 4) 오른쪽으로 촥 털기 → 실린더 착 닫힘 (0.62) → 실린더 살짝 돎
+		local flick = smooth(0.56, 0.61, r) * (1 - smooth(0.64, 0.74, r))
+		cf *= CFrame.Angles(0, math.rad(-8) * flick, math.rad(-50) * flick)
+		if crossed(0.62) then
+			jolt(0.1, 0.05, -0.24)
+			cylSpinV = 9
+		end
+	elseif state.reload and style == "cola" then
+		-- 내려서 포구를 위로 + 왼손이 총열을 잡음 → 오른손이 콜라 꺼내 위에서 쑤욱 → 고쳐 잡기
+		local low = smooth(0, 0.14, r) * (1 - smooth(0.82, 0.94, r))
+		cf *= CFrame.new(-0.2 * low, -0.55 * low, 0.3 * low) * CFrame.Angles(math.rad(62) * low, math.rad(-10) * low, math.rad(-8) * low)
 		showLeft = true
+		if low > 0.05 then
+			local barrel = magLoadLocal and magLoadLocal.Position * 0.6 or Vector3.new(0, 0, -gunLength * 0.4)
+			leftTarget = barrel + Vector3.new(0, -0.12 * S0, 0)
+		end
+		if crossed(0.74) then
+			jolt(0.08, -0.04, 0) -- 쑤욱 끝
+		end
+		if crossed(0.92) then
+			jolt(0.06, 0.05, 0.05) -- 고쳐 잡기
+		end
+	elseif state.reload then
+		-- 기본: 비틀며 들기 → 제자리
+		local tilt = math.min(backOut(math.clamp(r / 0.14, 0, 1)), 1 - backOut(math.clamp((r - 0.86) / 0.14, 0, 1)))
+		cf *= CFrame.new(0.08 * tilt, -0.2 * tilt, 0.05 * tilt) * CFrame.Angles(math.rad(-8) * tilt, math.rad(18) * tilt, math.rad(38) * tilt)
 	end
 	prevReload = r
 	-- 볼트: 굴리기 → 당기기 → 밀기 → 복귀 (boltAnimPortion 안에 빠르게 끝냄)
@@ -754,8 +871,6 @@ function ViewModel.Update(cam: Camera, state)
 	local boltB: number? = nil
 	if state.bolt then
 		boltB = math.clamp(state.bolt / VM.boltAnimPortion, 0, 1)
-	elseif state.reload and boltSet and r >= VM.reloadBoltStart and r <= VM.reloadBoltEnd then
-		boltB = (r - VM.reloadBoltStart) / (VM.reloadBoltEnd - VM.reloadBoltStart)
 	end
 	local bNow = boltB or 0
 	-- 볼트 당길 때 철컥, 밀어 넣을 때 탁 (스프링 충격)
@@ -780,6 +895,9 @@ function ViewModel.Update(cam: Camera, state)
 		cf *= CFrame.Angles(math.rad(4) * roll, 0, math.rad(rollAmt) * roll) * CFrame.new(-0.05 * roll, -0.06 * roll, 0)
 		cf *= CFrame.new(0, 0, -0.05 * thud) * CFrame.Angles(math.rad(-3) * thud, 0, 0)
 	end
+	-- 장전 중 볼트/노리쇠 (위 장전 동작에서 정함)
+	pull = math.max(pull, rPull)
+	lift = math.max(lift, rLift)
 
 	local gun = current:FindFirstChild("Gun")
 	if gun and gun:IsA("Model") then
@@ -811,10 +929,20 @@ function ViewModel.Update(cam: Camera, state)
 			bounce = -VM.coverBounce * math.sin(w1 * math.pi * 2) * (1 - w1)
 				+ VM.coverBounce * 0.5 * math.sin(w2 * math.pi * 2) * (1 - w2) * (w2 > 0 and 1 or 0)
 		end
+		if rPull > 0 then
+			open = math.max(open, math.min(rPull * 3, 1)) -- 장전 중 볼트 당기면 덮개도 열림
+		end
 		apply(coverSet, about(coverSet.pivot, CFrame.Angles(0, 0, math.rad(VM.coverOpen * open + bounce))))
 	end
-	-- 리볼버 실린더: 쏠 때마다 Z축 60° 한 칸, 장전 때 CylinderHinge 축으로 80° 열림
+	-- 스나 약실 탄환: 볼트가 뒤로 젖혀져 있을 때 배출구 안에 보임
+	if chamberRound then
+		chamberRound.CFrame = cf * chamberLocal
+		chamberRound.LocalTransparencyModifier = (chamberShow or (state.bolt and pull > 0.6)) and 0 or 1
+	end
+	-- 리볼버 실린더: 쏠 때마다 Z축 60° 한 칸, 장전 때 CylinderHinge 축으로 80° 열림, 열고 닫을 때 헛돎
 	if cylSet then
+		cylTarget += cylSpinV * dt
+		cylSpinV -= cylSpinV * math.min(dt * 3, 1)
 		cylAngle += (cylTarget - cylAngle) * math.min(dt * 30, 1)
 		local swing
 		if hingeLocal then
@@ -836,39 +964,38 @@ function ViewModel.Update(cam: Camera, state)
 		apply(triggerSet, about(triggerSet.pivot, CFrame.Angles(math.rad(-VM.triggerPull) * pullT, 0, 0)))
 	end
 	-- 탄창/콜라캔
-	local canPose: CFrame? = nil -- 콜라캔 장전 중 위치 (왼손이 따라감)
+	local canPose: CFrame? = nil -- 콜라캔 장전 중 위치 (오른손이 따라감)
 	if magSet and magLoadLocal and state.reload then
-		-- 콜라캐논: 컵에서 뽑기(+Y) → 눕혀서 포구 앞으로 → 포신 안으로 밀기 → (안 보임) → 새 캔이 컵에 올라옴
-		local r = state.reload
+		-- 콜라캐논: 오른손이 컵에서 뽑기(+Y) → 포구 위로 (포구가 하늘을 봄) → 위에서 아래로 쑤욱 → (안 보임) → 새 캔이 컵에 올라옴
 		local home = CFrame.new(magSet.pivot)
 		local lifted = CFrame.new(0, VM.canLift * S, 0) * home
 		local L = magLoadLocal
 		local inward = L.LookVector
-		local front = CFrame.fromMatrix(L.Position - inward * (canHalf + 0.15 * S), L.RightVector, inward)
-		local inside = front + inward * (canHalf + 0.15 * S + VM.canPush * S + canHalf)
+		local front = CFrame.fromMatrix(L.Position - inward * (canHalf + 0.3 * S), L.RightVector, inward)
+		local inside = front + inward * (canHalf + 0.3 * S + VM.canPush * S + canHalf)
 		local pose
 		local hide = false
-		if r < 0.08 then
+		if r < 0.16 then
 			pose = home
-		elseif r < 0.25 then
-			pose = home:Lerp(lifted, smooth(0.08, 0.25, r))
-		elseif r < 0.5 then
-			pose = lifted:Lerp(front, smooth(0.25, 0.5, r))
-		elseif r < 0.68 then
-			pose = front:Lerp(inside, smooth(0.5, 0.68, r))
-		elseif r < 0.85 then
+		elseif r < 0.32 then
+			pose = home:Lerp(lifted, smooth(0.16, 0.32, r))
+		elseif r < 0.52 then
+			pose = lifted:Lerp(front, smooth(0.32, 0.52, r))
+		elseif r < 0.74 then
+			pose = front:Lerp(inside, smooth(0.52, 0.74, r)) -- 쑤욱
+		elseif r < 0.86 then
 			pose, hide = inside, true
 		else
-			pose = CFrame.new(0, -0.6 * S * (1 - smooth(0.85, 1, r)), 0) * home
+			pose = CFrame.new(0, -0.6 * S * (1 - smooth(0.86, 1, r)), 0) * home
 		end
 		apply(magSet, pose * home:Inverse())
 		for _, e in magSet.parts do
 			e.part.LocalTransparencyModifier = hide and 1 or 0
 		end
-		if r > 0.08 and r < 0.68 then
+		if r > 0.1 and r < 0.76 then
 			canPose = pose
 		end
-		leftDrop = 0 -- 일반 탄창 동작/실린더 열기 대신
+		leftDrop = 0
 	elseif magSet and (magHidden or magMove) then
 		-- 탄창 던지기 장전: 던진 직후엔 총에 탄창 없음, 그다음 새 탄창이 왼손과 함께 올라와 끼워짐
 		if magMove then
@@ -896,11 +1023,16 @@ function ViewModel.Update(cam: Camera, state)
 	-- 손: 오른손 = 손잡이(볼트 땐 뒤로 당김, 손 위로), 왼손 = 총열 받침(장전 땐 아래로 탄창 빼기)
 	-- Grip/Foregrip 표시가 있으면 손이 정확히 그 자리 (없으면 대략 총 아래)
 	local rBase = hasGrip and Vector3.new(0, -0.1, 0) or Vector3.new(0.05, -0.25, 0.15)
-	local rHand = cf:PointToWorldSpace(rBase + Vector3.new(0.25 * pull, 0.35 * pull, 0.55 * pull))
+	-- 볼트식(스나)은 오른손이 볼트를 당김, AK 는 왼손이 당기니 오른손은 손잡이 그대로
+	local rPullHand = state.boltAction and pull or 0
+	local rHand = cf:PointToWorldSpace(rBase + Vector3.new(0.25 * rPullHand, 0.35 * rPullHand, 0.55 * rPullHand))
 	local lBase = foreLocal and (foreLocal + Vector3.new(0, -0.12, 0)) or Vector3.new(-0.05, -0.3, -gunLength * (VM.foregrip - VM.grip))
 	local lHand = cf:PointToWorldSpace(lBase + Vector3.new(0, -0.9 * leftDrop, 0.4 * leftDrop))
 	if canPose then
-		lHand = cf:PointToWorldSpace(canPose.Position + Vector3.new(0, -0.15, 0)) -- 콜라캔 장전: 왼손이 캔을 쥐고 옮김
+		rightTarget = canPose.Position + Vector3.new(0.12, -0.1, 0) -- 콜라캔 장전: 오른손이 캔을 쥐고 옮김
+	end
+	if rightTarget then
+		rHand = cf:PointToWorldSpace(rightTarget)
 	end
 	if leftTarget then
 		lHand = cf:PointToWorldSpace(leftTarget) -- 새 탄창 / 스피드로더를 쥔 왼손
