@@ -66,6 +66,25 @@ local A = {
 	-- 없으면 블록 스나이퍼로 대신 만듦
 	sniperTemplateFolder = "ArenaModels",
 	sniperTemplateName = "Sniper",
+	sniperRifleName = "SniperRifle", -- 같은 폴더에 총 모델 (Model 또는 Tool). 있으면 자동으로 손에 쥐어줌
+	-- R6 리그면 코드가 "서서 쏴" 자세로 꺾어줌 (리그는 기본 자세 그대로 넣으면 됨)
+	-- 좌표는 R6 기본 크기 기준, 몸 중심(몸통 가운데)에서: X = 오른쪽, Y = 위, Z = 뒤 (앞 = -Z)
+	sniperPose = {
+		enabled = true,
+		torsoYaw = -35, -- 몸통을 틀어서 왼어깨가 앞으로 (실제 저격 자세)
+		rightHand = Vector3.new(0.35, 0.35, -1.0), -- 오른손 = 방아쇠/손잡이
+		leftHand = Vector3.new(0.35, 0.45, -2.3), -- 왼손 = 총열 받침
+		rightFoot = Vector3.new(0.75, -3, 0.65), -- 오른발 뒤로
+		leftFoot = Vector3.new(-0.5, -3, -0.7), -- 왼발 앞으로
+		headYaw = 30, -- 몸통이 튼 만큼 고개는 다시 앞으로
+		headPitch = -8, -- 살짝 숙여서 조준경 보기
+		headRoll = -12, -- 총 쪽(오른쪽)으로 고개 기울임 (볼 붙이기)
+		gunHeight = 0.55, -- 총이 지나가는 높이
+		gunX = 0.35, -- 총이 지나가는 좌우 위치 (오른쪽 어깨 앞)
+		rifleGrip = 0.35, -- 총 길이 중 오른손이 쥐는 위치 (0 = 개머리판 끝, 1 = 총구)
+		rifleFlip = false, -- 총이 거꾸로(개머리판이 앞으로) 쥐어지면 true (총 안에 Muzzle 이 있으면 자동)
+		rifleUpsideDown = false, -- 총이 뒤집혀(조준경이 아래로) 쥐어지면 true
+	},
 	floorDrop = 8, -- 가장 낮은 고리보다 이만큼 아래로 떨어지면 장외 (구멍)
 	plowAngleDeg = 35, -- 날이 비스듬한 정도 (0 이면 그냥 미는 막대)
 	plowHeight = 6,
@@ -198,11 +217,156 @@ local function makeSniper(parent: Instance, feet: Vector3, lookAt: Vector3, k: n
 	return m
 end
 
+-- 팔다리 회전: 늘어뜨린 방향(아래) → d 방향으로 가장 짧게 돌리기 (팔이 이상하게 비틀리지 않게)
+local function limbRot(d: Vector3): CFrame
+	local from, to = Vector3.new(0, -1, 0), d.Unit
+	local axis = from:Cross(to)
+	local dot = math.clamp(from:Dot(to), -1, 1)
+	if axis.Magnitude < 1e-4 then
+		return dot > 0 and CFrame.identity or CFrame.Angles(math.pi, 0, 0)
+	end
+	return CFrame.fromAxisAngle(axis.Unit, math.acos(dot))
+end
+
+-- R6 리그를 "서서 쏴" 자세로 꺾음. 성공하면 몸 기준 프레임(원래 서 있던 몸통 CFrame) 반환
+--   팔다리 파트를 직접 옮기고, 나중에 관절을 없애고 전부 고정 → 자세가 절대 안 풀림
+local function poseR6(m: Model): CFrame?
+	local P = A.sniperPose
+	local torso = m:FindFirstChild("Torso")
+	local head = m:FindFirstChild("Head")
+	local ra, la = m:FindFirstChild("Right Arm"), m:FindFirstChild("Left Arm")
+	local rl, ll = m:FindFirstChild("Right Leg"), m:FindFirstChild("Left Leg")
+	for _, p in { torso, head, ra, la, rl, ll } do
+		if not (p and p:IsA("BasePart")) then
+			return nil -- R6 아님 → 자세는 템플릿 그대로
+		end
+	end
+	local body = { torso, head, ra, la, rl, ll }
+	local isBody = {}
+	for _, p in body do
+		isBody[p] = true
+	end
+	local hrp = m:FindFirstChild("HumanoidRootPart")
+	-- 모자/액세서리처럼 몸에 붙은 것들: 붙은 위치 기억 → 몸 옮긴 뒤 다시 붙임
+	local riders = {}
+	for _, j in m:GetDescendants() do
+		if j:IsA("JointInstance") or j:IsA("WeldConstraint") then
+			local p0, p1 = (j :: any).Part0, (j :: any).Part1
+			if p0 and p1 then
+				for _, pair in { { p0, p1 }, { p1, p0 } } do
+					local bodyPart, other = pair[1], pair[2]
+					if isBody[bodyPart] and not isBody[other] and other ~= hrp then
+						table.insert(riders, { part = other, to = bodyPart, offset = bodyPart.CFrame:ToObjectSpace(other.CFrame) })
+					end
+				end
+			end
+		end
+	end
+
+	local Bf = (torso :: BasePart).CFrame -- 원래 서 있던 몸
+	local T = Bf * CFrame.Angles(0, math.rad(P.torsoYaw), 0)
+	;(torso :: BasePart).CFrame = T
+	local function limb(part: BasePart, topLocal: Vector3, targetB: Vector3)
+		local top = T:PointToWorldSpace(topLocal)
+		local d = Bf:PointToWorldSpace(targetB) - top
+		if d.Magnitude < 0.01 then
+			return
+		end
+		d = d.Unit
+		part.CFrame = CFrame.new(top + d * part.Size.Y / 2) * (T.Rotation * limbRot(T:VectorToObjectSpace(d)))
+	end
+	limb(ra :: BasePart, Vector3.new(1.5, 0.9, 0), P.rightHand)
+	limb(la :: BasePart, Vector3.new(-1.5, 0.9, 0), P.leftHand)
+	limb(rl :: BasePart, Vector3.new(0.5, -1, 0), P.rightFoot)
+	limb(ll :: BasePart, Vector3.new(-0.5, -1, 0), P.leftFoot)
+	;(head :: BasePart).CFrame = T * CFrame.new(0, 1, 0) * CFrame.Angles(0, math.rad(P.headYaw), 0)
+		* CFrame.Angles(math.rad(P.headPitch), 0, math.rad(P.headRoll)) * CFrame.new(0, (head :: BasePart).Size.Y / 2, 0)
+	for _, r in riders do
+		r.part.CFrame = r.to.CFrame * r.offset
+	end
+	return Bf
+end
+
+-- 총 모델을 손에 쥐어줌: 가장 긴 축 = 총열 방향. 총구(Muzzle)가 있으면 그쪽이 앞, 없으면 rifleFlip 으로 정함
+local function attachRifle(m: Model, rifleTemplate: Instance, Bf: CFrame)
+	local P = A.sniperPose
+	local r = Instance.new("Model")
+	r.Name = "Rifle"
+	for _, c in rifleTemplate:Clone():GetChildren() do
+		c.Parent = r -- Tool 이든 Model 이든 안의 것만 꺼냄
+	end
+	for _, d in r:GetDescendants() do
+		if d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ModuleScript") then
+			d:Destroy()
+		end
+	end
+	local bbCF, size = r:GetBoundingBox()
+	local axes = {
+		{ v = bbCF.RightVector, len = size.X },
+		{ v = bbCF.UpVector, len = size.Y },
+		{ v = bbCF.LookVector, len = size.Z },
+	}
+	table.sort(axes, function(a, b)
+		return a.len > b.len
+	end)
+	local fwd, len, up = axes[1].v, axes[1].len, axes[2].v -- 가장 긴 축 = 총열, 두 번째 = 위아래
+	local muzzle = r:FindFirstChild("Muzzle", true)
+	local muzzlePos = muzzle and (muzzle:IsA("Attachment") and muzzle.WorldPosition or muzzle:IsA("BasePart") and muzzle.Position)
+	if muzzlePos then
+		if (muzzlePos - bbCF.Position):Dot(fwd) < 0 then
+			fwd = -fwd
+		end
+	elseif P.rifleFlip then
+		fwd = -fwd
+	end
+	if P.rifleUpsideDown then
+		up = -up
+	end
+	local stock = bbCF.Position - fwd * len / 2
+	local gripNow = stock + fwd * len * P.rifleGrip
+	local current = CFrame.fromMatrix(gripNow, fwd:Cross(up), up, -fwd)
+	local gripTarget = Bf:PointToWorldSpace(Vector3.new(P.gunX, P.gunHeight, P.rightHand.Z))
+	local wanted = CFrame.new(gripTarget) * Bf.Rotation
+	r:PivotTo(wanted * current:Inverse() * r:GetPivot())
+	-- 총구가 없으면 총 끝에 만들어 줌
+	if not muzzlePos then
+		local tip = gripTarget + Bf.LookVector * len * (1 - P.rifleGrip)
+		local best, bestD = nil, -math.huge
+		for _, p in r:GetDescendants() do
+			if p:IsA("BasePart") then
+				local dd = (p.Position - gripTarget):Dot(Bf.LookVector)
+				if dd > bestD then
+					best, bestD = p, dd
+				end
+			end
+		end
+		if best then
+			local att = Instance.new("Attachment")
+			att.Name = "Muzzle"
+			att.Position = best.CFrame:PointToObjectSpace(tip)
+			att.Parent = best
+		end
+	end
+	r.Parent = m
+end
+
 -- 개발자가 만든 스나이퍼 템플릿 복제: 크기 맞추고, 발바닥을 feet 높이에, 몸 앞이 lookAt 을 보게
-local function placeTemplate(template: Model, parent: Instance, feet: Vector3, lookAt: Vector3, scale: number, idx: number): Model
+local function placeTemplate(template: Model, rifle: Instance?, parent: Instance, feet: Vector3, lookAt: Vector3, scale: number, idx: number): Model
 	local m = template:Clone()
 	m.Name = "Sniper" .. idx
 	m:SetAttribute("Sniper", true)
+	-- R6 면 저격 자세로 꺾기 + 총 쥐어주기, 그다음 관절을 전부 없앰 (전부 고정되니 자세가 그대로 남음)
+	local Bf = A.sniperPose.enabled and poseR6(m) or nil
+	if rifle then
+		local torso = m:FindFirstChild("Torso") or m:FindFirstChild("UpperTorso")
+		local frame = Bf or (torso and torso:IsA("BasePart") and torso.CFrame) or m:GetPivot()
+		attachRifle(m, rifle, frame)
+	end
+	for _, j in m:GetDescendants() do
+		if j:IsA("JointInstance") or j:IsA("WeldConstraint") then
+			j:Destroy()
+		end
+	end
 	if scale ~= 1 then
 		m:ScaleTo(m:GetScale() * scale)
 	end
@@ -215,6 +379,9 @@ local function placeTemplate(template: Model, parent: Instance, feet: Vector3, l
 		elseif d:IsA("Humanoid") then
 			d.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None -- 이름/체력바 숨김
 			d.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+			d.RequiresNeck = false -- 관절을 없애도 "죽음" 처리 안 되게
+			d.BreakJointsOnDeath = false
+			d.EvaluateStateMachine = false -- 서 있으려고 몸을 움직이지 않게
 		elseif d:IsA("Script") or d:IsA("LocalScript") then
 			d:Destroy() -- Animate 같은 스크립트가 자세를 덮어쓰지 않게
 		end
@@ -493,7 +660,9 @@ function ArenaBuilder.Build(options: { keepTerrain: boolean? }?)
 	if sniperTemplate and not sniperTemplate:IsA("Model") then
 		sniperTemplate = nil
 	end
-	print(sniperTemplate and "[ArenaBuilder] 스나이퍼: 직접 만든 템플릿 사용" or "[ArenaBuilder] 스나이퍼: 템플릿 없음 → 블록 스나이퍼")
+	local sniperRifle = templateFolder and templateFolder:FindFirstChild(A.sniperRifleName)
+	print(sniperTemplate and "[ArenaBuilder] 스나이퍼: 직접 만든 템플릿 사용" or "[ArenaBuilder] 스나이퍼: 템플릿 없음 → 블록 스나이퍼",
+		sniperRifle and "/ 총 모델 사용" or "/ 총 모델 없음")
 	for _, side in sides do
 		local mid, along = A.center + side[1], side[2]
 		local look = CFrame.lookAt(mid, mid + along) -- Z 축 = 막 방향
@@ -510,7 +679,7 @@ function ArenaBuilder.Build(options: { keepTerrain: boolean? }?)
 			local feet = mid + along * (t * S) + Vector3.new(0, topY + 4, 0)
 			local aimAt = A.center + Vector3.new(0, outer.top, 0)
 			if sniperTemplate then
-				placeTemplate(sniperTemplate, fCurtain, feet, aimAt, A.sniperScale, sniperIdx)
+				placeTemplate(sniperTemplate :: Model, sniperRifle, fCurtain, feet, aimAt, A.sniperScale, sniperIdx)
 			else
 				makeSniper(fCurtain, feet, aimAt, A.sniperScale, sniperIdx)
 			end

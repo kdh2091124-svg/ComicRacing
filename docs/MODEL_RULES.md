@@ -3,6 +3,16 @@
 막 위 스나이퍼를 직접 만든 걸로 쓰려면 `ServerStorage.ArenaModels.Sniper` (Model) 에 두고 ArenaBuilder 를 다시 실행.
 없으면 블록 스나이퍼가 자동으로 나온다.
 
+**제일 쉬운 방법 (R6, 자세는 코드가 잡음)**
+1. 아바타 탭 → 리그 빌더 → **R6** 리그 생성. 자세는 건드리지 말고 기본으로 서 있는 그대로 (옷/모자 입혀도 됨)
+2. 이름 `Sniper` 로 `ServerStorage.ArenaModels` 에 넣기
+3. 총 모델(Model 또는 Tool)은 이름 `SniperRifle` 로 **같은 폴더**에 따로 넣기 → 코드가 "서서 쏴" 자세로 꺾고 총을 손에 쥐어줌
+   - 총 방향: 총의 가장 긴 쪽 = 총열. 총구 끝에 `Muzzle` Attachment 가 있으면 그쪽이 앞 (없으면 자동으로 만듦)
+   - 거꾸로 쥐면 `A.sniperPose.rifleFlip = true`, 뒤집히면 `rifleUpsideDown = true`, 쥐는 위치 `rifleGrip`
+   - 자세 각도/손발 위치도 `A.sniperPose` 에서 조절
+
+아래 표는 직접 자세를 잡아서 넣을 때 (R15 등):
+
 | 할 것 | 설명 |
 |---|---|
 | 기본 Rig (R6/R15 아무거나) | 아바타 탭 → 리그 빌더. 자세는 마음대로 (팔/다리 돌려서 저격 자세) |
