@@ -23,6 +23,8 @@ local DEFAULT_FOV = 70
 local active = false
 local yaw, pitch = 0, 0
 local recoilP, recoilY = 0, 0 -- 반동 (라디안): 쏘면 튀고, 매 프레임 원래 조준으로 돌아옴
+local shake, fovKick, bloom = 0, 0, 0 -- 화면 흔들림(스터드), 시야 펀치(도), 조준점 벌어짐(0~1)
+local TweenService = game:GetService("TweenService")
 local holding, zooming = false, false
 local lastFire = 0
 local conns: { RBXScriptConnection } = {}
@@ -57,10 +59,21 @@ cross.Position = center
 cross.Size = UDim2.fromOffset(40, 40)
 cross.BackgroundTransparency = 1
 cross.Parent = gui
-frame(cross, UDim2.fromOffset(4, 4), center, Color3.new(1, 1, 1))
-for _, o in { { 0, -14 }, { 0, 14 }, { -14, 0 }, { 14, 0 } } do
+local function outline(f: Frame)
+	local s = Instance.new("UIStroke") -- 검은 테두리 (밝은 배경에서도 보이게)
+	s.Thickness = 1
+	s.Color = Color3.new(0, 0, 0)
+	s.Transparency = 0.3
+	s.Parent = f
+end
+outline(frame(cross, UDim2.fromOffset(4, 4), center, Color3.new(1, 1, 1)))
+local CROSS_DIRS = { { 0, -1 }, { 0, 1 }, { -1, 0 }, { 1, 0 } }
+local crossArms: { Frame } = {}
+for _, o in CROSS_DIRS do
 	local vertical = o[1] == 0
-	frame(cross, vertical and UDim2.fromOffset(2, 9) or UDim2.fromOffset(9, 2), UDim2.new(0.5, o[1], 0.5, o[2]), Color3.new(1, 1, 1))
+	local arm = frame(cross, vertical and UDim2.fromOffset(3, 11) or UDim2.fromOffset(11, 3), UDim2.new(0.5, o[1] * 14, 0.5, o[2] * 14), Color3.new(1, 1, 1))
+	outline(arm)
+	table.insert(crossArms, arm)
 end
 
 local hitMark = Instance.new("Frame")
@@ -111,9 +124,17 @@ local function showHit(kind: string, killed: boolean)
 	for _, b in hitBars do
 		b.BackgroundColor3 = color
 	end
+	-- 맞힘 표시: 크게 튀어나왔다가 줄어듦 (킬이면 더 크게)
 	hitMark.Visible = true
+	hitMark.Size = UDim2.fromOffset(killed and 70 or 52, killed and 70 or 52)
+	TweenService:Create(hitMark, TweenInfo.new(0.12, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Size = UDim2.fromOffset(34, 34) }):Play()
 	killText.Visible = killed
-	task.delay(killed and 0.6 or 0.12, function()
+	if killed then
+		killText.TextSize = 64
+		TweenService:Create(killText, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { TextSize = 34 }):Play()
+		shake = math.max(shake, 0.6)
+	end
+	task.delay(killed and 0.7 or 0.15, function()
 		if hitToken == my then
 			hitMark.Visible = false
 			killText.Visible = false
@@ -256,6 +277,10 @@ local function fire()
 	recoilP = math.min(recoilP + kick, math.rad(G.recoilMax))
 	local side = math.rad(def.recoilSide or 0)
 	recoilY += (math.random() * 2 - 1) * side
+	-- 화면 흔들림 + 시야 펀치 + 조준점 벌어짐
+	shake = math.max(shake, def.shake or 0.15)
+	fovKick += def.fovKick or 1
+	bloom = math.min(bloom + (def.auto and 0.25 or 0.8), 1)
 end
 
 ----------------------------------------------------------------------
@@ -272,6 +297,7 @@ local function enter(char: Model, vehicle: Model?)
 	pitch = 0
 	local cam = workspace.CurrentCamera
 	cam.CameraType = Enum.CameraType.Scriptable
+	shake, fovKick, bloom = 0, 0, 0
 
 	table.insert(conns, UserInputService.InputBegan:Connect(function(input, processed)
 		if processed then
@@ -302,32 +328,44 @@ local function enter(char: Model, vehicle: Model?)
 			zooming = false
 		end
 	end))
-	table.insert(conns, UserInputService.InputChanged:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseMovement then
-			local sens = G.mouseSensitivity * (zooming and G.zoomSensitivityScale or 1)
-			yaw -= input.Delta.X * sens
-			pitch = math.clamp(pitch - input.Delta.Y * sens, math.rad(G.pitchMin), math.rad(G.pitchMax))
-		end
-	end))
-
-	RunService:BindToRenderStep(BIND, Enum.RenderPriority.Camera.Value + 2, function(dt)
+	-- 맨 마지막 순서로 카메라를 잡음 (기본 카메라가 덮어쓰던 문제 → 화면 안 돌아가고 반동도 안 보였음)
+	RunService:BindToRenderStep(BIND, Enum.RenderPriority.Last.Value, function(dt)
 		local c = player.Character
 		local head = c and c:FindFirstChild("Head") :: BasePart?
 		if not head then
 			return
 		end
+		cam = workspace.CurrentCamera
+		if cam.CameraType ~= Enum.CameraType.Scriptable then
+			cam.CameraType = Enum.CameraType.Scriptable -- 다른 코드가 되돌려도 다시 잡음
+		end
 		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+		-- 마우스 움직임: 매 프레임 직접 읽음 (가운데 고정 상태에서 확실함)
+		local md = UserInputService:GetMouseDelta()
+		local sens = G.mouseSensitivity * (zooming and G.zoomSensitivityScale or 1)
+		yaw -= md.X * sens
+		pitch = math.clamp(pitch - md.Y * sens, math.rad(G.pitchMin), math.rad(G.pitchMax))
 		-- 반동 되돌아오기
 		local back = math.min(dt * G.recoilRecover, 1)
 		recoilP -= recoilP * back
 		recoilY -= recoilY * back
+		shake = math.max(shake - dt * 6 * math.max(shake, 0.3), 0)
+		fovKick -= fovKick * math.min(dt * 10, 1)
+		bloom -= bloom * math.min(dt * 8, 1)
 		local rot = CFrame.fromEulerAnglesYXZ(pitch + recoilP, yaw + recoilY, 0)
 		local def = currentDef()
 		local offset = zooming and G.cameraOffset * Vector3.new(0.6, 0.5, 0.3) or G.cameraOffset
-		local pos = head.Position + rot:VectorToWorldSpace(offset)
-		cam.CFrame = CFrame.lookAt(pos, pos + rot.LookVector)
-		local fov = zooming and def and def.zoomFov or DEFAULT_FOV
-		cam.FieldOfView += (fov - cam.FieldOfView) * math.min(dt * 12, 1)
+		local jitter = Vector3.new(math.random() - 0.5, math.random() - 0.5, 0) * shake
+		local pos = head.Position + rot:VectorToWorldSpace(offset + jitter)
+		cam.CFrame = CFrame.lookAt(pos, pos + rot.LookVector) * CFrame.Angles(0, 0, (math.random() - 0.5) * shake * 0.08)
+		local fov = (zooming and def and def.zoomFov or DEFAULT_FOV) + fovKick
+		cam.FieldOfView += (fov - cam.FieldOfView) * math.min(dt * 14, 1)
+		-- 조준점 벌어짐 (쏠수록 벌어졌다 모임)
+		local gap = 10 + bloom * 26 + (def and def.spread or 0) * (zooming and 2 or 5)
+		for i, arm in crossArms do
+			local o = CROSS_DIRS[i]
+			arm.Position = UDim2.new(0.5, o[1] * gap, 0.5, o[2] * gap)
+		end
 		if holding and def and def.auto then
 			fire()
 		end
@@ -360,12 +398,20 @@ local function exit()
 	end
 end
 
-RunService.Heartbeat:Connect(function()
+-- 보조석 들어가고 나오기 (잠깐 좌석 판정이 흔들려도 바로 나가지 않게 0.25초 기다림)
+local lostFor = 0
+RunService.Heartbeat:Connect(function(dt)
 	local char, _, vehicle = gunner()
-	if char and not active then
-		enter(char, vehicle)
-	elseif not char and active then
-		exit()
+	if char then
+		lostFor = 0
+		if not active then
+			enter(char, vehicle)
+		end
+	elseif active then
+		lostFor += dt
+		if lostFor > 0.25 then
+			exit()
+		end
 	end
 end)
 

@@ -26,8 +26,10 @@ WeaponConfig.Weapons = {
 		magazine = 30,
 		reloadTime = 2.0,
 		zoomFov = 55, -- 우클릭 조준 시 시야
-		recoil = 0.9, -- 한 발 쏠 때 화면이 위로 튀는 각도 (도). 쏜 뒤 원래 조준으로 돌아옴
-		recoilSide = 0.35, -- 좌우로 흔들리는 최대 각도 (도)
+		recoil = 1.8, -- 한 발 쏠 때 화면이 위로 튀는 각도 (도). 쏜 뒤 원래 조준으로 돌아옴
+		shake = 0.18, -- 쏠 때 화면 흔들림 (스터드)
+		fovKick = 1.5, -- 쏠 때 시야가 순간 넓어지는 정도 (도)
+		recoilSide = 0.7, -- 좌우로 흔들리는 최대 각도 (도)
 	},
 	{
 		id = "Sniper",
@@ -43,7 +45,9 @@ WeaponConfig.Weapons = {
 		magazine = 5,
 		reloadTime = 2.6,
 		zoomFov = 20,
-		recoil = 6,
+		recoil = 10,
+		shake = 0.8,
+		fovKick = 7,
 		recoilSide = 1,
 	},
 	{
@@ -60,7 +64,9 @@ WeaponConfig.Weapons = {
 		magazine = 6,
 		reloadTime = 2.2,
 		zoomFov = 50,
-		recoil = 3.5,
+		recoil = 6,
+		shake = 0.45,
+		fovKick = 4,
 		recoilSide = 0.8,
 	},
 	{
@@ -81,7 +87,9 @@ WeaponConfig.Weapons = {
 		magazine = 3,
 		reloadTime = 2.6,
 		zoomFov = 60,
-		recoil = 5,
+		recoil = 8,
+		shake = 0.7,
+		fovKick = 6,
 		recoilSide = 1.2,
 		projectileColor = Color3.fromRGB(120, 60, 30),
 	},
@@ -99,8 +107,8 @@ WeaponConfig.General = {
 	cameraOffset = Vector3.new(2.2, 2.4, 9), -- 머리 기준 오른쪽, 위, 뒤
 	mouseSensitivity = 0.0035,
 	zoomSensitivityScale = 0.4, -- 조준 중엔 마우스가 이만큼 느리게
-	recoilRecover = 7, -- 반동이 원래 조준으로 돌아오는 빠르기 (클수록 빨리)
-	recoilMax = 12, -- 연사로 쌓이는 반동 최대 (도)
+	recoilRecover = 6, -- 반동이 원래 조준으로 돌아오는 빠르기 (클수록 빨리)
+	recoilMax = 16, -- 연사로 쌓이는 반동 최대 (도)
 	pitchMin = -70,
 	pitchMax = 60,
 }
