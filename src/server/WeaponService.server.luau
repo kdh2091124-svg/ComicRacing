@@ -311,18 +311,37 @@ local function explodeShell(s: Shell, at: Vector3)
 	boom.BlastPressure = 0
 	boom.DestroyJointRadiusPercent = 0
 	boom.Parent = workspace
+	-- 콜라 거품 폭발: 커지며 사라지는 갈색 공 + 흰 거품/갈색 방울이 사방으로
 	local fizz = Instance.new("Part")
 	fizz.Shape = Enum.PartType.Ball
 	fizz.Anchored = true
 	fizz.CanCollide = false
 	fizz.CanQuery = false
+	fizz.CanTouch = false
+	fizz.CastShadow = false
 	fizz.Material = Enum.Material.Neon
 	fizz.Color = Color3.fromRGB(150, 80, 40)
-	fizz.Transparency = 0.4
-	fizz.Size = Vector3.one * s.def.splashRadius
+	fizz.Transparency = 0.2
+	fizz.Size = Vector3.one * 3
 	fizz.CFrame = CFrame.new(at)
 	fizz.Parent = workspace
-	Debris:AddItem(fizz, 0.15)
+	game:GetService("TweenService"):Create(fizz, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.one * s.def.splashRadius * 1.6,
+		Transparency = 1,
+	}):Play()
+	local bubbles = Instance.new("ParticleEmitter")
+	bubbles.Color = ColorSequence.new(Color3.fromRGB(255, 250, 235), Color3.fromRGB(140, 70, 30))
+	bubbles.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1.2), NumberSequenceKeypoint.new(1, 0) })
+	bubbles.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1) })
+	bubbles.Speed = NumberRange.new(25, 60)
+	bubbles.SpreadAngle = Vector2.new(180, 180)
+	bubbles.Lifetime = NumberRange.new(0.4, 0.9)
+	bubbles.Acceleration = Vector3.new(0, -40, 0)
+	bubbles.Drag = 2
+	bubbles.Rate = 0
+	bubbles.Parent = fizz
+	bubbles:Emit(45)
+	Debris:AddItem(fizz, 1)
 
 	local shooterVehicle = s.owner.Character and vehicleOf(s.owner.Character:FindFirstChildOfClass("Humanoid") and s.owner.Character:FindFirstChildOfClass("Humanoid").SeatPart)
 	local r = s.def.splashRadius
@@ -481,6 +500,17 @@ Remote.OnServerEvent:Connect(function(player, action, a, b, c)
 		part.Color = def.projectileColor or Color3.fromRGB(120, 60, 30)
 		part.Material = Enum.Material.Glass
 		part.CFrame = CFrame.new(a)
+		-- 꼬리: 거품 줄기 (갈색 → 흰색으로 사라짐)
+		local a0, a1 = Instance.new("Attachment"), Instance.new("Attachment")
+		a0.Position, a1.Position = Vector3.new(0, 0.6, 0), Vector3.new(0, -0.6, 0)
+		a0.Parent, a1.Parent = part, part
+		local trail = Instance.new("Trail")
+		trail.Attachment0, trail.Attachment1 = a0, a1
+		trail.Color = ColorSequence.new(Color3.fromRGB(150, 80, 40), Color3.fromRGB(255, 250, 235))
+		trail.Transparency = NumberSequence.new(0.1, 1)
+		trail.Lifetime = 0.35
+		trail.LightEmission = 0.5
+		trail.Parent = part
 		part.Parent = workspace
 		local ignore: { Instance } = { char, part }
 		if myVehicle then

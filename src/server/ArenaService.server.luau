@@ -9,7 +9,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local Debris = game:GetService("Debris")
 
 local Arena = require(ReplicatedStorage.Shared.Config.GameplayConfig).Arena
 local ArenaBounds = require(script.Parent.ArenaBounds)
@@ -66,43 +65,15 @@ local function aim(sniper: Model, target: Vector3)
 	end
 end
 
-local function fx(name: string, size: Vector3, cf: CFrame, color: Color3, life: number, shape: Enum.PartType?)
-	local p = Instance.new("Part")
-	p.Name = name
-	p.Anchored = true
-	p.CanCollide = false
-	p.CanQuery = false
-	p.CanTouch = false
-	p.CastShadow = false
-	p.Material = Enum.Material.Neon
-	p.Color = color
-	p.Size = size
-	p.CFrame = cf
-	if shape then
-		p.Shape = shape
-	end
-	p.Parent = workspace
-	Debris:AddItem(p, life)
-end
-
--- "탕": 총구 섬광 + 총알 줄기 + 맞은 자리 번쩍
-local function fire(sniper: Model?, target: Vector3)
+-- "탕": 그림은 각 화면이 그림 (LockOnClient) → 대상의 "지금" 위치로 정확히 박힘
+--   (서버가 그리면 서버가 아는 위치 = 통신 지연만큼 예전 위치라 빗나가 보였음)
+local WeaponRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Weapon") :: RemoteEvent
+local function fire(sniper: Model?, target: Model, targetPos: Vector3)
 	if not sniper then
 		return
 	end
-	aim(sniper, target)
-	-- 총구: 모델 안 어디든 "Muzzle" 이라는 파트 또는 Attachment (총 모델 안에 있어도 됨)
-	local muzzle = sniper:FindFirstChild("Muzzle", true)
-	local from = sniper:GetPivot().Position
-	if muzzle and muzzle:IsA("Attachment") then
-		from = muzzle.WorldPosition
-	elseif muzzle and muzzle:IsA("BasePart") then
-		from = muzzle.Position
-	end
-	local dist = (target - from).Magnitude
-	fx("SniperTracer", Vector3.new(0.6, 0.6, dist), CFrame.lookAt((from + target) / 2, target), Color3.fromRGB(255, 240, 150), Arena.tracerTime)
-	fx("MuzzleFlash", Vector3.one * 5, CFrame.new(from), Color3.fromRGB(255, 200, 80), 0.08, Enum.PartType.Ball)
-	fx("HitFlash", Vector3.one * 6, CFrame.new(target), Color3.fromRGB(255, 255, 255), 0.08, Enum.PartType.Ball)
+	aim(sniper, targetPos)
+	WeaponRemote:FireAllClients("SniperShot", sniper.Name, target, targetPos)
 end
 
 type Lock = {
@@ -235,7 +206,7 @@ RunService.Heartbeat:Connect(function(dt)
 		if gone then
 			clearLock(target)
 		elseif shouldFire(lock, now) then
-			fire(lock.sniper, lock.part.Position)
+			fire(lock.sniper, target, lock.part.Position)
 			clearLock(target)
 			lock.kill()
 		elseif lock.sniper then

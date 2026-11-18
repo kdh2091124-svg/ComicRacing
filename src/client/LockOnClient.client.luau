@@ -10,6 +10,8 @@ local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Arena = require(ReplicatedStorage.Shared.Config.GameplayConfig).Arena
+local GunFX = require(script.Parent:WaitForChild("GunFX"))
+local WeaponRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Weapon") :: RemoteEvent
 
 local player = Players.LocalPlayer
 local RED = Color3.fromRGB(255, 40, 40)
@@ -221,5 +223,54 @@ RunService.RenderStepped:Connect(function()
 			f.BackgroundTransparency = a
 		end
 		warnText.TextTransparency = (now * 5) % 1 < 0.5 and 0 or 0.4
+	end
+end)
+
+-- 스나이퍼 "탕": 서버는 누구를 쐈는지만 알려줌 → 내 화면에서 대상의 "지금" 위치로 그림
+WeaponRemote.OnClientEvent:Connect(function(kind, sniperName, target, fallbackPos)
+	if kind ~= "SniperShot" then
+		return
+	end
+	local to = typeof(fallbackPos) == "Vector3" and fallbackPos or nil
+	if typeof(target) == "Instance" and target:IsA("Model") then
+		local p = targetPart(target)
+		if p then
+			to = p.Position
+		end
+	end
+	local sniper = type(sniperName) == "string" and findSniper(sniperName) or nil
+	local muzzle = sniper and sniper:FindFirstChild("Muzzle", true)
+	local from: Vector3? = nil
+	if muzzle and muzzle:IsA("Attachment") then
+		from = muzzle.WorldPosition
+	elseif muzzle and muzzle:IsA("BasePart") then
+		from = muzzle.Position
+	elseif sniper then
+		from = sniper:GetPivot().Position
+	end
+	if not from or not to then
+		return
+	end
+	local style = GunFX.Style("ArenaSniper")
+	local dir = (to - from).Unit
+	GunFX.Muzzle(from, dir, style)
+	GunFX.Tracer(from, to, style)
+	GunFX.Impact(to, -dir, "car", 3)
+	-- 내가 맞았으면 화면 크게 번쩍
+	if typeof(target) == "Instance" and target:IsA("Model") and isMine(target) then
+		local sg = Instance.new("ScreenGui") -- warnGui 는 락온 풀리면 꺼져서 따로
+		sg.IgnoreGuiInset = true
+		sg.ResetOnSpawn = false
+		sg.Parent = player:WaitForChild("PlayerGui")
+		local flash = Instance.new("Frame")
+		flash.Size = UDim2.fromScale(1, 1)
+		flash.BackgroundColor3 = Color3.new(1, 1, 1)
+		flash.BackgroundTransparency = 0.2
+		flash.BorderSizePixel = 0
+		flash.Parent = sg
+		game:GetService("TweenService"):Create(flash, TweenInfo.new(0.3), { BackgroundTransparency = 1 }):Play()
+		task.delay(0.35, function()
+			sg:Destroy()
+		end)
 	end
 end)

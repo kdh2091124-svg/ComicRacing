@@ -12,6 +12,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Debris = game:GetService("Debris")
 
 local WeaponConfig = require(ReplicatedStorage.Shared.Config.WeaponConfig)
+local GunFX = require(script.Parent:WaitForChild("GunFX"))
 local G = WeaponConfig.General
 local Remote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Weapon") :: RemoteEvent
 
@@ -21,6 +22,7 @@ local DEFAULT_FOV = 70
 
 local active = false
 local yaw, pitch = 0, 0
+local recoilP, recoilY = 0, 0 -- 반동 (라디안): 쏘면 튀고, 매 프레임 원래 조준으로 돌아옴
 local holding, zooming = false, false
 local lastFire = 0
 local conns: { RBXScriptConnection } = {}
@@ -157,23 +159,28 @@ local function muzzlePos(char: Model?): Vector3?
 	return nil
 end
 
-local function tracer(from: Vector3, to: Vector3, color: Color3?)
-	local d = (to - from).Magnitude
-	if d < 0.5 then
-		return
+-- 총 방향 (탄피 튀는 방향용): 총 모델이 있으면 그 오른쪽/위, 없으면 기본값
+local function gunAxes(char: Model?, fallbackDir: Vector3): (Vector3, Vector3)
+	local gun = char and char:FindFirstChild("GunnerWeapon")
+	local handle = gun and gun:IsA("Model") and gun.PrimaryPart
+	if handle then
+		return handle.CFrame.RightVector, handle.CFrame.UpVector
 	end
-	local p = Instance.new("Part")
-	p.Anchored = true
-	p.CanCollide = false
-	p.CanQuery = false
-	p.CanTouch = false
-	p.CastShadow = false
-	p.Material = Enum.Material.Neon
-	p.Color = color or Color3.fromRGB(255, 230, 140)
-	p.Size = Vector3.new(0.18, 0.18, d)
-	p.CFrame = CFrame.lookAt((from + to) / 2, to)
-	p.Parent = workspace.CurrentCamera
-	Debris:AddItem(p, G.tracerTime)
+	local right = fallbackDir:Cross(Vector3.yAxis)
+	return right.Magnitude > 0.01 and right.Unit or Vector3.xAxis, Vector3.yAxis
+end
+
+-- 쏘는 연출 한 세트: 섬광 + 탄피 + 줄기 + 맞은 자리
+local function shotFX(char: Model?, weaponId: string?, from: Vector3, to: Vector3, hitInst: Instance?, normal: Vector3?, hit: boolean)
+	local style = GunFX.Style(weaponId)
+	local dir = (to - from).Magnitude > 0.01 and (to - from).Unit or Vector3.zAxis
+	GunFX.Muzzle(from, dir, style)
+	local right, up = gunAxes(char, dir)
+	GunFX.Shell(from - dir * 1.2, right, up, style)
+	GunFX.Tracer(from, to, style)
+	if hit then
+		GunFX.Impact(to, normal, GunFX.KindOf(hitInst), weaponId == "Sniper" and 1.6 or 1)
+	end
 end
 
 local function rayParams(char: Model, vehicle: Model?): RaycastParams
@@ -234,14 +241,21 @@ local function fire()
 		local pDir = (aimPoint - pOrigin)
 		pDir = pDir.Magnitude > 0.1 and pDir.Unit or dir
 		Remote:FireServer("FireProjectile", pOrigin, pDir)
+		local style = GunFX.Style(def.id)
+		GunFX.Muzzle(pOrigin, pDir, style)
+		local right, up = gunAxes(char, pDir)
+		GunFX.Shell(pOrigin - pDir * 1.2, right, up, style)
 	else
 		local res = workspace:Raycast(origin, dir * def.range, params)
 		local hitPos = res and res.Position or origin + dir * def.range
 		Remote:FireServer("Fire", origin, res and res.Instance, hitPos)
-		tracer(from, hitPos)
+		shotFX(char, def.id, from, hitPos, res and res.Instance, res and res.Normal, res ~= nil)
 	end
-	-- 반동: 화면이 살짝 위로
-	pitch = math.clamp(pitch + (0.004 + def.damage * 0.0004), math.rad(G.pitchMin), math.rad(G.pitchMax))
+	-- 반동: 화면이 위로(+좌우 살짝) 튀었다가 매 프레임 원래 조준으로 돌아옴
+	local kick = math.rad(def.recoil or 1) * (zooming and 0.7 or 1)
+	recoilP = math.min(recoilP + kick, math.rad(G.recoilMax))
+	local side = math.rad(def.recoilSide or 0)
+	recoilY += (math.random() * 2 - 1) * side
 end
 
 ----------------------------------------------------------------------
@@ -252,6 +266,7 @@ local function enter(char: Model, vehicle: Model?)
 	active = true
 	gui.Enabled = true
 	holding, zooming = false, false
+	recoilP, recoilY = 0, 0
 	local look = (vehicle and vehicle.PrimaryPart and vehicle.PrimaryPart.CFrame.LookVector) or Vector3.new(0, 0, -1)
 	yaw = math.atan2(-look.X, -look.Z)
 	pitch = 0
@@ -302,7 +317,11 @@ local function enter(char: Model, vehicle: Model?)
 			return
 		end
 		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
-		local rot = CFrame.fromEulerAnglesYXZ(pitch, yaw, 0)
+		-- 반동 되돌아오기
+		local back = math.min(dt * G.recoilRecover, 1)
+		recoilP -= recoilP * back
+		recoilY -= recoilY * back
+		local rot = CFrame.fromEulerAnglesYXZ(pitch + recoilP, yaw + recoilY, 0)
 		local def = currentDef()
 		local offset = zooming and G.cameraOffset * Vector3.new(0.6, 0.5, 0.3) or G.cameraOffset
 		local pos = head.Position + rot:VectorToWorldSpace(offset)
@@ -358,10 +377,16 @@ Remote.OnClientEvent:Connect(function(kind, a, b, c, d)
 	if kind == "Shot" then
 		-- 다른 보조수가 쏜 총알 줄기 (그 사람 총구에서)
 		local shooter = a :: Player
-		local from = muzzlePos(shooter and shooter.Character) or b
+		local shooterChar = shooter and shooter.Character
+		local from = muzzlePos(shooterChar) or b
 		if typeof(from) == "Vector3" and typeof(c) == "Vector3" then
-			local def = type(d) == "string" and WeaponConfig.Get(d)
-			tracer(from, c, def and def.kind == "projectile" and Color3.fromRGB(150, 80, 40) or nil)
+			-- 맞은 게 뭔지 내 화면에서 살짝 확인 (불똥 종류)
+			local params = RaycastParams.new()
+			params.FilterType = Enum.RaycastFilterType.Exclude
+			params.FilterDescendantsInstances = shooterChar and { shooterChar, workspace.CurrentCamera } or { workspace.CurrentCamera }
+			local dir = c - from
+			local res = dir.Magnitude > 0.1 and workspace:Raycast(from, dir * 1.03, params) or nil
+			shotFX(shooterChar, type(d) == "string" and d or nil, from, c, res and res.Instance, res and res.Normal, true)
 		end
 	elseif kind == "Hit" then
 		showHit(a, b == true)
