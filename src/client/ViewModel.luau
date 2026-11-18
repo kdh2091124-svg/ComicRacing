@@ -1211,8 +1211,9 @@ function ViewModel.Update(cam: Camera, state)
 		for _, cr in cylRounds do
 			-- 장전 중: 탄피가 한 칸씩 슬슬 빠져서 빔 → 스피드로더 꽂으면 다시 참
 			local emptyNow = style == "revolver" and r >= REVOLVER_SHELL + cr.idx * REVOLVER_SHELL_GAP and r < REVOLVER_LOAD
-			-- 쏜 칸은 비어 보임 (쏠 때마다 실린더가 돌며 한 칸씩 빔)
-			cr.part.LocalTransparencyModifier = (emptyNow or cylSpent[cr.idx + 1]) and 1 or 0
+			-- 쏜 칸은 탄피가 그대로 남아 있음 (탄두만 나감) → 어두운 빈 탄피 색. 장전 때 빼야 비로소 빔
+			cr.part.LocalTransparencyModifier = emptyNow and 1 or 0
+			cr.part.Color = cylSpent[cr.idx + 1] and Color3.fromRGB(150, 110, 50) or Color3.fromRGB(225, 175, 70)
 		end
 		local swing
 		if hingeLocal then
