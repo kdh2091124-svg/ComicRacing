@@ -34,8 +34,8 @@ local STYLE = {
 	junctionFlatRadius = 100, -- 갈림길 주변 이 거리 안은 큰 길 기울기 0 으로
 	sameLevel = 4, -- 높이 차이가 이 안이면 "같은 높이로 닿음" → 입구
 	underClear = 4, -- 다른 길이 이보다 낮으면 "아래 지나감" → 이 구간은 다리
-	maxGrade = 24, -- 이보다 가파른 구간은 자동으로 높이를 다듬음 (도)
-	maxGradeWarn = 18, -- 점검: 이 각도보다 가파르면 표시
+	maxGrade = 16, -- 이보다 가파른 구간은 자동으로 높이를 다듬음 (도). 너무 가파른 곳 방지
+	maxGradeWarn = 13, -- 점검: 이 각도보다 가파르면 표시
 }
 
 ----------------------------------------------------------------------
@@ -44,15 +44,53 @@ local STYLE = {
 local CITY_CENTER = Vector3.new(0, 24, 0)
 local RING_RADIUS = 380
 
--- 고갯길 산 (북서쪽 끝): 가파르게 쫘아악 내려오는 다운힐 + 급한 헤어핀
+-- 바깥 월드 크기 배율 (도시는 그대로, 바깥 도로/산 위치만 줄이거나 늘림). 이동 시간이 길면 낮추기
+local WORLD = 0.6
+local function W(x: number, y: number, z: number, extra: { [string]: any }?)
+	local p = { x * WORLD, y, z * WORLD }
+	for k, v in extra or {} do
+		p[k] = v
+	end
+	return p
+end
+local function near(x: number, z: number)
+	return { x * WORLD, z * WORLD }
+end
+
+-- 고갯길 (북서쪽 산): 구간마다 성격이 다름 (완만 스위퍼 / 급한 헤어핀 / 가파른 직선 / S 시케인 / 쉬는 구간 / 연속 헤어핀)
 local TOUGE = {
-	base = Vector3.new(-2300, 55, -2400),
+	base = Vector3.new(-2300 * WORLD, 55, -2400 * WORLD), -- 산 입구
 	dir = Vector3.new(-1, 0, -1).Unit, -- 산꼭대기 방향
-	legs = 9, -- 지그재그 구간 수 (헤어핀 8개)
-	advance = 150, -- 한 구간마다 산 쪽으로 들어가는 거리 (위아래 길 간격, 길끼리 안 겹치게 140 이상)
-	halfLeg = 190, -- 한 구간 좌우 폭의 절반 (짧을수록 가파름)
-	hairpinOut = 50, -- 헤어핀이 바깥으로 튀어나가는 정도 (작을수록 급함)
-	summitY = 1100, -- 꼭대기 높이 (평균 경사 약 13°, 산 비탈 약 38°)
+	heightScale = 1.15, -- 아래 높이 값에 곱함 (꼭대기 약 700)
+}
+
+-- 고갯길 경로 (산 기준 좌표): { 산 쪽으로 들어간 거리, 좌우, 높이 }
+-- 위아래로 겹치는 구간끼리는 "산 쪽 거리"가 70 이상 떨어지게 설계 (길끼리 안 겹침)
+local TOUGE_PATH = {
+	-- 1) 완만한 스위퍼로 시작
+	{ 0, -200, 0 }, { 20, -60, 15 }, { 10, 90, 32 }, { 0, 220, 48 },
+	-- 2) 급한 헤어핀 (오른쪽)
+	{ 55, 290, 60 }, { 110, 220, 72 },
+	-- 3) 가파른 직선 (쫘아악)
+	{ 115, 60, 108 }, { 115, -120, 150 },
+	-- 4) 크게 도는 완만한 U 턴
+	{ 150, -250, 168 }, { 230, -290, 186 }, { 300, -230, 200 },
+	-- 5) 빠른 S 시케인
+	{ 310, -120, 214 }, { 345, -40, 226 }, { 300, 40, 238 }, { 335, 120, 250 }, { 310, 200, 262 },
+	-- 6) 급한 헤어핀 (오른쪽)
+	{ 360, 265, 276 }, { 410, 205, 290 },
+	-- 7) 쉬는 구간 (거의 평평)
+	{ 420, 60, 296 }, { 410, -80, 302 },
+	-- 8) 급한 헤어핀 (왼쪽)
+	{ 455, -150, 314 }, { 505, -90, 328 },
+	-- 9) 가파른 직선 내리막
+	{ 510, 80, 374 }, { 505, 200, 404 },
+	-- 10) 연속 헤어핀 (오른쪽 → 왼쪽)
+	{ 550, 265, 420 }, { 600, 205, 436 }, { 605, 100, 456 }, { 650, 40, 468 }, { 700, 100, 482 },
+	-- 11) 긴 S 스위퍼로 꼭대기
+	{ 705, 200, 496 }, { 760, 250, 512 }, { 820, 170, 534 }, { 860, 40, 552 },
+	-- 12) 꼭대기
+	{ 900, -40, 560 },
 }
 
 local function ringPoints(center: Vector3, radius: number, count: number, bank: number)
@@ -64,65 +102,49 @@ local function ringPoints(center: Vector3, radius: number, count: number, bank: 
 	return pts
 end
 
--- 고갯길 점: 산비탈을 좌우로 지그재그 (구간 중간엔 S 자로 꺾이고, 끝마다 급한 헤어핀)
 local function tougePoints()
 	local T = TOUGE
 	local u = T.dir
 	local v = Vector3.new(-u.Z, 0, u.X)
-	local rise = (T.summitY - T.base.Y) / T.legs
 	local pts = {}
-	local function P(a: number, l: number, y: number)
-		local p = T.base + u * a + v * l
-		table.insert(pts, { p.X, y, p.Z })
+	for _, q in TOUGE_PATH do
+		local p = T.base + u * q[1] + v * q[2]
+		table.insert(pts, { p.X, T.base.Y + q[3] * T.heightScale, p.Z })
 	end
-	for i = 0, T.legs - 1 do
-		local s = (i % 2 == 0) and 1 or -1
-		local a0 = i * T.advance
-		local y0 = T.base.Y + i * rise
-		local kink = T.advance * 0.13 * s
-		P(a0, -s * T.halfLeg, y0)
-		P(a0 + kink, -s * T.halfLeg * 0.35, y0 + rise * 0.28)
-		P(a0 - kink, s * T.halfLeg * 0.35, y0 + rise * 0.55)
-		P(a0, s * T.halfLeg, y0 + rise * 0.8)
-		if i < T.legs - 1 then
-			P(a0 + T.advance * 0.5, s * (T.halfLeg + T.hairpinOut), y0 + rise * 0.9)
-		end
-	end
-	P((T.legs - 1) * T.advance + 120, 0, T.summitY)
 	return pts
 end
 
 -- 길 목록 (위에서부터 순서대로. 나중 길이 앞의 길에 join 으로 붙을 수 있음)
---   점: { x, 높이, z, bank = 기울기(도, + 면 오른쪽이 낮음), bridge = true }
---       { join = "길 이름", near = { x, z } } → 그 길에서 가장 가까운 지점에 정확히 붙음
+--   점: { x, 높이, z, bank = 기울기(도, + 면 오른쪽이 낮음), bridge = true }   (바깥 월드는 W(...) 로 써서 WORLD 배율 적용)
+--       { join = "길 이름", near = { x, z } }
 --   옵션: width, step(조각 길이), rails(true 항상 / false 없음), fill(false = 아래 지형 안 채움), closed
 local ROUTES = {
-	-- 바깥 큰 순환 고속도로 (반시계: 남 → 동 → 북 → 서)
+	-- 바깥 순환 고속도로 (반시계: 남 → 동 → 북 → 서)
 	{
 		name = "Highway",
 		closed = true,
 		width = 58,
-		step = 10,
+		step = 8,
 		points = {
-			{ 0, 20, 2500 },
-			{ 900, 28, 2380, bank = -5 },
-			{ 1750, 40, 1950, bank = -8 },
-			{ 2350, 55, 1250, bank = -6 },
-			{ 2600, 65, 450 },
-			{ 2620, 92, 0 }, -- 언덕 꼭대기 (살짝 뜀)
-			{ 2600, 60, -500 },
-			{ 2380, 48, -1300, bank = -7 },
-			{ 1850, 38, -2000, bank = -8 },
-			{ 1000, 30, -2450, bank = -5 },
-			{ 150, 32, -2580 },
-			{ -700, 42, -2450, bank = -5 },
-			{ -1450, 55, -2050, bank = -8 },
-			{ -2050, 50, -1350, bank = -7 },
-			{ -2350, 42, -500 },
-			{ -2380, 36, 350 },
-			{ -2150, 28, 1150, bank = -6 },
-			{ -1650, 24, 1900, bank = -8 },
-			{ -850, 20, 2380, bank = -5 },
+			W(0, 20, 2500),
+			W(900, 28, 2380, { bank = -5 }),
+			W(1750, 38, 1950, { bank = -8 }),
+			W(2350, 48, 1250, { bank = -6 }),
+			W(2600, 56, 450),
+			W(2620, 74, 0), -- 언덕 꼭대기 (살짝 뜀)
+			W(2600, 52, -500),
+			W(2380, 44, -1300, { bank = -7 }),
+			W(1850, 36, -2000, { bank = -8 }),
+			W(1000, 30, -2450, { bank = -5 }),
+			W(150, 32, -2580),
+			W(-700, 40, -2450, { bank = -5 }),
+			W(-1450, 50, -2050, { bank = -8 }),
+			W(-2050, 46, -1350, { bank = -7 }),
+			W(-2350, 40, -500),
+			W(-2380, 34, 350),
+			W(-2150, 28, 1150, { bank = -6 }),
+			W(-1650, 24, 1900, { bank = -8 }),
+			W(-850, 20, 2380, { bank = -5 }),
 		},
 	},
 	{
@@ -161,59 +183,59 @@ local ROUTES = {
 	{
 		name = "NorthRoad", -- 굽이치는 언덕길
 		width = 44,
-		step = 8,
+		step = 6,
 		points = {
 			{ join = "CenterRing", near = { 0, -RING_RADIUS } },
-			{ 60, 30, -900 },
-			{ -160, 45, -1400, bank = 6 },
-			{ 120, 55, -1900, bank = -6 },
-			{ join = "Highway", near = { 150, -2580 } },
+			W(60, 30, -1000),
+			W(-160, 42, -1500, { bank = 6 }),
+			W(120, 40, -2000, { bank = -6 }),
+			{ join = "Highway", near = near(150, -2580) },
 		},
 	},
 	{
 		name = "EastRoad", -- 고속 직선 + 완만한 언덕
 		width = 46,
-		step = 10,
+		step = 8,
 		points = {
 			{ join = "CenterRing", near = { RING_RADIUS, 0 } },
-			{ 1000, 30, 40 },
-			{ 1700, 42, -40 },
-			{ join = "Highway", near = { 2350, 1250 } },
+			W(1100, 30, 40),
+			W(1750, 40, -40),
+			{ join = "Highway", near = near(2350, 1250) },
 		},
 	},
 	{
 		name = "SouthRoad", -- 해안 S 커브
 		width = 44,
-		step = 8,
+		step = 6,
 		points = {
 			{ join = "CenterRing", near = { 0, RING_RADIUS } },
-			{ 300, 22, 1000, bank = 6 },
-			{ -280, 22, 1550, bank = -7 },
-			{ 220, 20, 2050, bank = 6 },
-			{ join = "Highway", near = { 0, 2500 } },
+			W(300, 22, 1050, { bank = 6 }),
+			W(-280, 22, 1600, { bank = -7 }),
+			W(220, 20, 2100, { bank = 6 }),
+			{ join = "Highway", near = near(0, 2500) },
 		},
 	},
 	{
 		name = "WestRoad", -- 서쪽 들판길
 		width = 44,
-		step = 8,
+		step = 6,
 		points = {
 			{ join = "CenterRing", near = { -RING_RADIUS, 0 } },
-			{ -1100, 30, 120 },
-			{ -1750, 38, -120, bank = -5 },
-			{ join = "Highway", near = { -2350, -500 } },
+			W(-1150, 30, 120),
+			W(-1800, 36, -120, { bank = -5 }),
+			{ join = "Highway", near = near(-2350, -500) },
 		},
 	},
-	-- 고갯길: 고속도로 북서쪽에서 갈라져 가파른 산을 지그재그로 오르내림 (헤어핀 + S 꺾임)
+	-- 고갯길 (다운힐)
 	{
 		name = "Touge",
-		width = 34, -- 좁게 (고갯길 느낌)
+		width = 34,
 		step = 4,
 		rails = true,
 		points = (function()
 			local pts = {
-				{ join = "Highway", near = { -1700, -1850 } },
-				{ -2000, 52, -2150 },
+				{ join = "Highway", near = near(-1700, -1850) },
+				W(-2000, 52, -2150),
 			}
 			for _, p in tougePoints() do
 				table.insert(pts, p)
@@ -442,7 +464,7 @@ end
 ----------------------------------------------------------------------
 type Fill = { cf: CFrame, size: Vector3 }
 
-local function buildRoute(parent: Instance, plan: Plan, fills: { Fill })
+local function buildRoute(parent: Instance, plan: Plan, fills: { Fill }, carves: { Fill })
 	local route = plan.route
 	local folder = Instance.new("Folder")
 	folder.Name = route.name
@@ -487,6 +509,8 @@ local function buildRoute(parent: Instance, plan: Plan, fills: { Fill })
 
 		-- 아스팔트는 두껍게(2) → 위아래로 꺾이는 곳에서도 틈이 안 보임
 		newPart(folder, "Road", Vector3.new(W, 2, L), cf(0, -1), STYLE.asphalt)
+		-- 도로 위 30 높이까지 지형 깎을 자리 (풀이 도로로 삐져나오지 않게)
+		table.insert(carves, { cf = CFrame.fromMatrix(mid + up * 15.2, right, up, -fwd), size = Vector3.new(W + S * 2 + 4, 30, L + 1) })
 		newPart(folder, "Shoulder", Vector3.new(W + S * 2, 2, L), cf(0, -1.05), STYLE.grass)
 		if not inTrim then
 			if not opening then
@@ -647,14 +671,17 @@ end
 ----------------------------------------------------------------------
 -- 지형: 고갯길 산 + 길 아래 채우기
 ----------------------------------------------------------------------
-local function buildTerrain(fills: { Fill })
+local function buildTerrain(fills: { Fill }, carves: { Fill })
 	local terrain = workspace.Terrain
-	-- 고갯길 산: 꼭대기에서 멀어질수록 낮아지는 원뿔 (고갯길이 올라가는 비율과 같게 → 길을 덮지 않음)
+	-- 고갯길 산: 꼭대기에서 멀어질수록 낮아지는 원뿔 (길보다 항상 낮게: 꼭대기보다 60 아래에서 시작)
 	local T = TOUGE
-	local runLen = (T.legs - 1) * T.advance + 120
-	local summit = T.base + T.dir * runLen
-	local slope = (T.summitY - T.base.Y) / runLen
-	local peakH = T.summitY - 40
+	local top = TOUGE_PATH[#TOUGE_PATH]
+	local runLen = top[1]
+	local summitY = T.base.Y + top[3] * T.heightScale
+	local v = Vector3.new(-T.dir.Z, 0, T.dir.X)
+	local summit = T.base + T.dir * top[1] + v * top[2]
+	local slope = (summitY - T.base.Y) / runLen
+	local peakH = summitY - 60
 	local maxR = peakH / slope
 	local steps = 50
 	for k = 0, steps - 1 do
@@ -665,6 +692,10 @@ local function buildTerrain(fills: { Fill })
 	end
 	for _, f in fills do
 		terrain:FillBlock(f.cf, f.size, Enum.Material.Grass)
+	end
+	-- 도로 위 공간의 지형(풀)을 깎아냄: 산비탈이나 둑이 도로/갓길 위로 삐져나오지 않게
+	for _, c in carves do
+		terrain:FillBlock(c.cf, c.size, Enum.Material.Air)
 	end
 end
 
@@ -725,8 +756,9 @@ function RoadBuilder.Build(options: { keepTerrain: boolean? }?)
 	roads.Parent = map
 	local plans = planRoutes()
 	local fills: { Fill } = {}
+	local carves: { Fill } = {}
 	for _, plan in plans do
-		buildRoute(roads, plan, fills)
+		buildRoute(roads, plan, fills, carves)
 	end
 
 	local spawnCF = buildCity(map)
@@ -740,7 +772,7 @@ function RoadBuilder.Build(options: { keepTerrain: boolean? }?)
 	spawn.Parent = map
 
 	map.Parent = workspace
-	buildTerrain(fills)
+	buildTerrain(fills, carves)
 
 	if recording then
 		ChangeHistoryService:FinishRecording(recording, Enum.FinishRecordingOperation.Commit)

@@ -17,7 +17,7 @@ Studio 명령줄 (기존 Workspace.Map 은 ServerStorage 로 백업됨):
 require(game.ServerStorage.Tools.RoadBuilder:Clone()).Build()
 ```
 - 길 모양은 `src/tools/RoadBuilder.luau` 의 `ROUTES` 점만 고치면 됨 (다시 Build 하면 반영)
-- 고갯길 경사/높이: `TOUGE` 의 `summitY`, `halfLeg` (짧을수록 가파름)
+- 바깥 월드 크기: `WORLD` (도시는 그대로). 고갯길 모양: `TOUGE_PATH` (구간마다 { 산 쪽 거리, 좌우, 높이 })
 - Build 할 때 지형(Terrain)을 새로 만듦 (지형 직접 손본 게 있으면 `Build({ keepTerrain = true })`)
 - 끝나면 Output 에 "길 점검" (길마다 최대 경사, 자동 다리, 입구 수)
 - 직접 손볼 땐 Workspace.Map.Roads 안의 조각을 움직이면 됨
