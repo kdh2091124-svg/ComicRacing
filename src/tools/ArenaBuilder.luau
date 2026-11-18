@@ -57,6 +57,12 @@ local A = {
 		{ ring = 2, count = 2, speed = 18, dir = -1, push = "in", startDeg = 0 },
 		{ ring = 3, count = 1, speed = 14, dir = 1, push = "in", startDeg = 90 },
 	},
+	-- 네모난 큰 막 + 그 위 스나이퍼 (장외로 나가면 쏴서 터뜨림. 실제 판정/사격은 서버 ArenaService)
+	curtainMargin = 130, -- 바깥 고리에서 막까지 거리
+	curtainAbove = 140, -- 바깥 고리보다 막이 얼마나 높은지
+	snipersPerSide = 2,
+	sniperScale = 3, -- 스나이퍼 크기 (멀리서도 보이게 크게)
+	floorDrop = 8, -- 가장 낮은 고리보다 이만큼 아래로 떨어지면 장외 (구멍)
 	plowAngleDeg = 35, -- 날이 비스듬한 정도 (0 이면 그냥 미는 막대)
 	plowHeight = 6,
 	plowThick = 4,
@@ -78,6 +84,11 @@ local A = {
 		bridge = Color3.fromRGB(255, 210, 60),
 		lava = Color3.fromRGB(255, 90, 20),
 		buff = Color3.fromRGB(60, 230, 200),
+		curtain = Color3.fromRGB(255, 70, 90),
+		rim = Color3.fromRGB(45, 48, 60),
+		sniperBody = Color3.fromRGB(70, 90, 60),
+		sniperSkin = Color3.fromRGB(240, 200, 160),
+		sniperGun = Color3.fromRGB(25, 25, 30),
 		plowA = Color3.fromRGB(255, 200, 30),
 		plowB = Color3.fromRGB(30, 30, 35),
 	},
@@ -144,6 +155,43 @@ local function slopeBlock(parent: Instance, r0: number, r1: number, th: number, 
 	local cf = segFrame((r0 + r1) / 2, th, (low + high) / 2) * CFrame.Angles(0, 0, -a) * CFrame.new(0, -T / 2, 0)
 	newPart(parent, "Slope", Vector3.new(len, T, segLen(r1)), cf, A.colors.slope, Enum.Material.SmoothPlastic)
 	ringBlock(parent, r0, r1, th, low, A.colors.slope, "SlopeFill")
+end
+
+-- 블록 스나이퍼 (엎드린 게 아니라 서서 저격총 겨눔). 서버가 쏠 때 몸을 돌려 조준함
+--   Model Attribute "Sniper" = true, 총구 파트 이름 "Muzzle"
+local function makeSniper(parent: Instance, feet: Vector3, lookAt: Vector3, k: number, idx: number): Model
+	local m = Instance.new("Model")
+	m.Name = "Sniper" .. idx
+	m:SetAttribute("Sniper", true)
+	local base = CFrame.lookAt(feet, Vector3.new(lookAt.X, feet.Y, lookAt.Z))
+	local function at(x: number, y: number, z: number): CFrame
+		return base * CFrame.new(x * k, y * k, z * k)
+	end
+	local C = A.colors
+	for _, x in { -0.5, 0.5 } do
+		newPart(m, "Leg", Vector3.new(1, 2, 1) * k, at(x, 1, 0), C.sniperBody)
+	end
+	local torso = newPart(m, "Torso", Vector3.new(2, 2, 1) * k, at(0, 3, 0), C.sniperBody)
+	newPart(m, "Head", Vector3.new(1.2, 1.2, 1.2) * k, at(0, 4.6, 0), C.sniperSkin)
+	newPart(m, "Helmet", Vector3.new(1.4, 0.5, 1.4) * k, at(0, 5.3, 0), C.sniperBody)
+	newPart(m, "ArmR", Vector3.new(0.8, 0.8, 2) * k, at(0.9, 3.4, -0.9), C.sniperBody)
+	newPart(m, "ArmL", Vector3.new(0.8, 0.8, 2) * k, at(-0.5, 3.4, -1.4), C.sniperBody)
+	newPart(m, "Rifle", Vector3.new(0.4, 0.5, 5) * k, at(0.3, 3.7, -2.6), C.sniperGun, Enum.Material.Metal)
+	newPart(m, "Scope", Vector3.new(0.3, 0.3, 1.2) * k, at(0.3, 4.1, -2), C.sniperGun, Enum.Material.Metal)
+	local muzzle = newPart(m, "Muzzle", Vector3.new(0.3, 0.3, 0.3) * k, at(0.3, 3.7, -5.2), C.sniperGun)
+	muzzle.Transparency = 1
+	-- 빨간 조준 점 (멀리서도 "날 보고 있다" 느낌)
+	local eye = newPart(m, "LaserDot", Vector3.new(0.25, 0.25, 0.1) * k, at(0.3, 3.7, -5.1), Color3.fromRGB(255, 30, 30), Enum.Material.Neon)
+	eye.CanCollide = false
+	for _, d in m:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.CanQuery = false
+			d.CanTouch = false
+		end
+	end
+	m.PrimaryPart = torso
+	m.Parent = parent
+	return m
 end
 
 local function smooth(u: number): number
@@ -382,6 +430,42 @@ function ArenaBuilder.Build(options: { keepTerrain: boolean? }?)
 	lava.Shape = Enum.PartType.Cylinder
 	lava.CanCollide = false
 	lava.CanQuery = false
+
+	-- 7-2) 네모난 큰 막 (통과 가능, 보기용) + 막 위 통로 + 스나이퍼
+	local fCurtain = folder(map, "Curtain")
+	local S = outer.r1 + A.curtainMargin -- 중심에서 막까지 (반)
+	local topY = outer.top + A.curtainAbove
+	local wallH = topY - A.baseY
+	local sides = {
+		{ Vector3.new(0, 0, -S), Vector3.new(1, 0, 0) },
+		{ Vector3.new(0, 0, S), Vector3.new(1, 0, 0) },
+		{ Vector3.new(-S, 0, 0), Vector3.new(0, 0, 1) },
+		{ Vector3.new(S, 0, 0), Vector3.new(0, 0, 1) },
+	}
+	local sniperIdx = 0
+	for _, side in sides do
+		local mid, along = A.center + side[1], side[2]
+		local look = CFrame.lookAt(mid, mid + along) -- Z 축 = 막 방향
+		local curtain = newPart(fCurtain, "Curtain", Vector3.new(2, wallH, S * 2 + 2), look * CFrame.new(0, A.baseY + wallH / 2, 0), A.colors.curtain, Enum.Material.ForceField)
+		curtain.CanCollide = false
+		curtain.CanQuery = false
+		curtain.CanTouch = false
+		curtain.CastShadow = false
+		local rim = newPart(fCurtain, "Rim", Vector3.new(14, 4, S * 2 + 14), look * CFrame.new(0, topY + 2, 0), A.colors.rim, Enum.Material.Metal)
+		rim.CanQuery = false
+		for k = 1, A.snipersPerSide do
+			sniperIdx += 1
+			local t = (k / (A.snipersPerSide + 1)) * 2 - 1 -- -1 ~ 1 사이 고르게
+			local feet = mid + along * (t * S) + Vector3.new(0, topY + 4, 0)
+			makeSniper(fCurtain, feet, A.center + Vector3.new(0, outer.top, 0), A.sniperScale, sniperIdx)
+		end
+	end
+
+	-- 장외 판정용 정보 (서버 ArenaBounds 가 읽음)
+	map:SetAttribute("ArenaCenter", A.center)
+	map:SetAttribute("ArenaOuterR", outer.r1)
+	map:SetAttribute("ArenaPitR", A.pitRadius)
+	map:SetAttribute("ArenaFloorY", inner.top - A.floorDrop)
 
 	-- 8) 스폰: 바깥 고리. 나중에 PVP 부활 위치로 쓸 표시 8개 (ArenaSpawn)
 	local rmOuter = (outer.r0 + outer.r1) / 2

@@ -198,6 +198,16 @@ GameplayConfig.Health = {
 	safeSpotInterval = 0.5, -- 부활 위치 기록 간격 (땅에 똑바로 있을 때만)
 }
 
+-- PVP 아레나: 장외로 나가면 막 위의 스나이퍼가 바로 쏴서 터뜨림 (체력 상관없이 한 방)
+GameplayConfig.Arena = {
+	oobMargin = 5, -- 바깥 고리 가장자리에서 이만큼 더 나가면 장외
+	sniperDelay = 0.12, -- 장외 → 총 쏘기까지 (아주 짧게, "탕" 하는 박자)
+	tracerTime = 0.15, -- 총알 줄기 보이는 시간
+	checkInterval = 0.05, -- 장외 검사 간격 (초)
+	safeMargin = 40, -- 부활 위치는 가장자리/구멍에서 이만큼 안쪽인 곳만 기록
+	shootOnFoot = true, -- 차 없이 걸어서 장외로 가도 쏨
+}
+
 -- 트라이얼 (혼자 기록 경쟁)
 GameplayConfig.Trial = {
 	enabled = false, -- 지금은 꺼둠 (오픈월드 먼저, 레이스는 나중에). 켜면 트라이얼 게이트/구간 기록/고스트 부활

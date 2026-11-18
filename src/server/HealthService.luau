@@ -13,6 +13,8 @@ local Debris = game:GetService("Debris")
 
 local Health = require(ReplicatedStorage.Shared.Config.GameplayConfig).Health
 local Ragdoll = require(script.Parent.Ragdoll)
+local ArenaBounds = require(script.Parent.ArenaBounds)
+local ArenaConfig = require(ReplicatedStorage.Shared.Config.GameplayConfig).Arena
 
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local VehicleFX = Remotes:WaitForChild("VehicleFX") :: RemoteEvent
@@ -178,7 +180,8 @@ local function explode(model: Model, frozen: { BasePart }?, savedVel: Vector3?)
 			end
 		end
 		if owner and owner.Parent and respawnFn and type(vehicleId) == "string" then
-			local spot = safe or CFrame.new(pos)
+			-- 안전한 곳 기록이 없으면 아레나 부활 위치 (터진 자리 = 장외라 또 저격당하는 것 방지)
+			local spot = safe or ArenaBounds.SpawnCFrame() or CFrame.new(pos)
 			local yawOnly = CFrame.lookAt(spot.Position, spot.Position + (spot.LookVector * Vector3.new(1, 0, 1) + Vector3.new(0, 0, -0.001)).Unit)
 			local newModel = respawnFn(owner, vehicleId, yawOnly + Vector3.new(0, 4, 0))
 			local hum = owner.Character and owner.Character:FindFirstChildOfClass("Humanoid")
@@ -274,7 +277,8 @@ function HealthService.Start(vehiclesFolder: Folder, respawn: (Player, string, C
 				i.lastSafeCheck = now
 				local cf = chassis.CFrame
 				if cf.UpVector.Y > 0.85 and cf.Position.Y > Health.drownY + 10
-					and chassis.AssemblyLinearVelocity.Y > -20 then
+					and chassis.AssemblyLinearVelocity.Y > -20
+					and not ArenaBounds.IsOut(cf.Position, ArenaConfig.safeMargin) then -- 장외/가장자리 근처에서 부활 안 하게
 					i.safeCFrame = cf
 				end
 			end

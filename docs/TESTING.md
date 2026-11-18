@@ -20,6 +20,8 @@ require(game.ServerStorage.Tools.ArenaBuilder:Clone()).Build()
 - 난간 없음 (경사로에서도 언제든 박아서 아래로 떨굴 수 있음). 다시 켜려면 `A.rampRails = true`
 - 크기/높이/경사로 위치/기울기는 `src/tools/ArenaBuilder.luau` 맨 위 `A` 표에서만 고치면 됨
 - 하늘색 공(BuffSpawn) = 나중에 버프 아이템이 나올 자리 표시 (아직 먹어도 아무 일 없음)
+- 빨간 네모 막 + 막 위 스나이퍼 8명: 장외로 나가면 0.12초 뒤 "탕" (총알 줄기) → 바로 폭발. 막은 통과 가능(보기용). 판정/사격은 서버 `ArenaService`, 수치는 `GameplayConfig.Arena`
+  - 막 크기/높이/스나이퍼 수: `A.curtainMargin`, `A.curtainAbove`, `A.snipersPerSide`
 - 바깥 가장자리는 벽 없이 전부 뚫림(빨강/흰 연석) = 밀려나면 바깥으로 떨어져 장외. 벽을 다시 세우려면 `A.outerOpen = false` (그때는 `A.gaps` 자리만 뚫림)
 - 노랑/검정 회전 쟁기 = 캠핑 방지. 바깥 고리는 바깥쪽으로, 중간/안쪽 고리는 구멍 쪽으로 밀어냄. 개수/속도/방향: `A.plows`
   - 쟁기는 플레이(Play)를 눌러야 돌아감 (편집 화면에선 멈춰 있음). 물리는 서버가 맡음 (`ArenaService`)
