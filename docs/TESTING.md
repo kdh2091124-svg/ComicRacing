@@ -11,6 +11,16 @@
    그러면 `Workspace.Map` 이 생긴다. 이제 직접 고쳐도 되고, Rojo는 맵을 건드리지 않는다.
 5. 꼭 **저장하거나 게시**한다. 맵은 Git이 아니라 플레이스 파일에 저장되기 때문이다.
 
+## 보조수 총 (2명 테스트)
+Studio 테스트 탭 → 클라이언트 및 서버 → 플레이어 2명 → 시작. 한 명은 차를 꺼내 운전, 다른 한 명은 그 차 동승석에 탑승 (차가 2인승 이상이어야 함, 예: ShoppingCart)
+- 동승석에 앉으면 보조수 모드: 어깨 너머 카메라, 화면 가운데 조준점
+- 좌클릭 쏘기(AR 꾹 = 연사) · 우클릭 꾹 조준 · R 장전 · 1~4 무기 바꾸기(테스트용) · F 내리기
+- 사람을 맞히면 그 사람 체력, 차를 맞히면 차 HP. 머리 맞히면 노란 표시, 죽이면 빨간 표시 + KILL
+- 콜라캐논 = 날아가는 탄, 터지면 범위 피해 + 차를 밀어냄 (장외로 날리기)
+- 죽으면 5초 뒤 부활 → 자기 차가 살아 있으면 원래 좌석으로
+- 무기 모델: `ReplicatedStorage.WeaponModels` 에 `AR`, `Sniper`, `Revolver`, `ColaCannon` 이름으로 (Tool 또는 Model, 총구 끝에 `Muzzle` Attachment). 없으면 검은 상자 총
+- 수치: `src/shared/Config/WeaponConfig.luau`
+
 ## PVP 깔때기 아레나 (최신 맵)
 Studio 명령줄 (기존 Workspace.Map 은 ServerStorage 로 백업, 지형은 비움):
 ```lua

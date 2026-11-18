@@ -23,6 +23,9 @@
         },
         "Ragdoll": {
           "$className": "RemoteEvent"
+        },
+        "Weapon": {
+          "$className": "RemoteEvent"
         }
       }
     },
