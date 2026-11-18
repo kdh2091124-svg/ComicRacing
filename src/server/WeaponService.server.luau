@@ -417,7 +417,8 @@ RunService.Heartbeat:Connect(function(dt)
 		else
 			s.pos += step
 			s.vel += Vector3.new(0, -workspace.Gravity * s.def.projectileGravity * dt, 0)
-			s.part.CFrame = CFrame.lookAt(s.pos, s.pos + s.vel)
+			-- 원통 축(X)을 날아가는 방향으로 + 빙글빙글
+			s.part.CFrame = CFrame.lookAt(s.pos, s.pos + s.vel) * CFrame.Angles(0, math.pi / 2, 0) * CFrame.Angles(s.traveled * 0.15, 0, 0)
 		end
 	end
 end)
@@ -516,14 +517,15 @@ Remote.OnServerEvent:Connect(function(player, action, a, b, c)
 		local dir = b.Unit
 		local part = Instance.new("Part")
 		part.Name = "ColaShell"
-		part.Shape = Enum.PartType.Ball
-		part.Size = Vector3.one * 1.6
+		-- 콜라캔 모양 (빨간 원통), 날아가며 빙글빙글
+		part.Shape = Enum.PartType.Cylinder
+		part.Size = Vector3.new(1.5, 0.95, 0.95) -- X = 캔 길이 (원통 축)
 		part.Anchored = true
 		part.CanCollide = false
 		part.CanQuery = false
 		part.CanTouch = false
-		part.Color = def.projectileColor or Color3.fromRGB(120, 60, 30)
-		part.Material = Enum.Material.Glass
+		part.Color = Color3.fromRGB(210, 25, 35)
+		part.Material = Enum.Material.SmoothPlastic
 		part.CFrame = CFrame.new(a)
 		-- 꼬리: 거품 줄기 (갈색 → 흰색으로 사라짐)
 		local a0, a1 = Instance.new("Attachment"), Instance.new("Attachment")

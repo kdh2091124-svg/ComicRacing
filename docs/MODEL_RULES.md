@@ -11,8 +11,18 @@
 | `Aim` | Attachment | 조준(우클릭) 때 눈앞 정중앙에 올 점 = 가늠자/도트사이트 가운데. 없으면 대충 가운데 (스나는 조준경 화면이라 필요 없음) |
 | `Mag` | 파트, 또는 그 이름의 Model/Folder | 탄창. 1인칭 장전 때 실제로 빠졌다 꽂힘 |
 | `Bolt` | 파트, 또는 그 이름의 Model/Folder | 볼트 손잡이. 1인칭 볼트 때 들고 당겼다 밀림, 연사 총은 쏠 때마다 철컥 |
-| `Cylinder` | 파트, 또는 그 이름의 Model/Folder | 리볼버 실린더. 쏠 때마다 한 칸(60°) 돌고, 장전 때 왼쪽으로 열림. **회전축 = 총열 방향, 실린더 가운데** |
-| `Hammer` | 파트, 또는 그 이름의 Model/Folder | 리볼버 공이치기. 쏘면 앞으로 떨어졌다 다시 젖혀짐 |
+| `Cylinder` | 파트, 또는 그 이름의 Model/Folder | 리볼버 실린더. 쏠 때마다 Z축 60° 한 칸, 장전 때 `CylinderHinge` 축으로 80° 열림 |
+| `CylinderHinge` | Attachment | 리볼버 실린더 여는 경첩. 앞쪽(-Z) = 축 방향 |
+| `Hammer` | 파트 | 리볼버 공이치기. 쏘는 순간 X축 +35° 젖혀졌다 떨어짐 |
+| `Trigger` | 파트 | 방아쇠. 쏠 때 X축 -22° 당겼다 놓음 |
+| `Cover` | 파트 | 스나 볼트 창 덮개. 볼트 당길 때 Z축 +95° 열리며 덜컹, 다 밀면 닫히며 덜컹. 탄피는 이때 나옴 |
+| `MagLid` | 파트 | 콜라캔 뚜껑. `Mag`(캔)과 똑같이 움직임 |
+| `MagLoad` | Attachment | 콜라캐논 캔 넣는 곳. 앞쪽(-Z) = 포신 안쪽. 장전: 캔 뽑기 → 눕혀 포구 앞 → 밀어 넣기 |
+| `Handle` | 파트 (투명) | 있으면 기준: 오른손 위치, **앞쪽(-Z) = 총구 방향**, 위(+Y) = 위. 없으면 가장 긴 축으로 추정 |
+
+- **회전 중심 = 그 파트의 피벗(PivotOffset)**. 모델 만들 때 실제 축/경첩에 피벗을 맞춰두면 그대로 돎. 회전 축 방향은 총(Handle) 기준 X/Y/Z
+- `Eject` Attachment 의 앞쪽(-Z) = 탄피 날아갈 방향
+- 무기 리그 상세 (위치/각도 표): 개발자가 만든 `WeaponRig_README.md` (DEAD-ANGLE 기본 무기 4종)
 
 - 방향: 총의 **가장 긴 쪽 = 총열**. 크기는 아무렇게나 만들어도 됨 → 코드가 `WeaponConfig` 의 `viewLength`(1인칭), `worldLength`(남이 보는 손) 길이에 맞춰 줄이고 키움
 - 움직이는 정도: `src/client/ViewModel.luau` 의 `VM` (`boltTravel`, `boltLift`, `shotSlide`, `magDrop`)

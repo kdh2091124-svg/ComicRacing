@@ -337,21 +337,32 @@ local function gunAxes(char: Model?, fallbackDir: Vector3): (Vector3, Vector3)
 end
 
 -- 탄피 배출구: 내 1인칭 총의 "Eject" → 남의 손 총의 "Eject" → 없으면 nil (총구 뒤쪽에서 대충)
-local function ejectPos(char: Model?): Vector3?
+--   반환: 위치, 탄피 날아갈 방향 ("Eject" 의 앞쪽 -Z)
+local function ejectPos(char: Model?): (Vector3?, Vector3?)
 	if char and char == player.Character and G.firstPerson then
-		local p = ViewModel.EjectPosition()
+		local p, d = ViewModel.EjectPosition()
 		if p then
-			return p
+			return p, d
 		end
 	end
 	local gun = char and char:FindFirstChild("GunnerWeapon")
 	local e = gun and gun:FindFirstChild("Eject", true)
 	if e and e:IsA("Attachment") then
-		return e.WorldPosition
+		return e.WorldPosition, e.WorldCFrame.LookVector
 	elseif e and e:IsA("BasePart") then
-		return e.Position
+		return e.Position, e.CFrame.LookVector
 	end
-	return nil
+	return nil, nil
+end
+
+-- 탄피 하나: 배출구가 있으면 그 방향으로, 없으면 총 오른쪽으로
+local function spawnShell(char: Model?, fallbackPos: Vector3, right: Vector3, up: Vector3, style)
+	local p, d = ejectPos(char)
+	if p and d then
+		GunFX.Shell(p, d, Vector3.yAxis * 0.25, style)
+	else
+		GunFX.Shell(fallbackPos, right, up, style)
+	end
 end
 
 -- 쏘는 연출 한 세트: 섬광 + 탄피 + 줄기 + 맞은 자리
@@ -363,11 +374,11 @@ local function shotFX(char: Model?, weaponId: string?, from: Vector3, to: Vector
 	local right, up = gunAxes(char, dir)
 	if def and def.boltTime then
 		-- 볼트식: 탄피는 쏠 때가 아니라 볼트 당길 때 튐
-		task.delay(def.boltTime * 0.45, function()
-			GunFX.Shell(ejectPos(char) or from - dir * 1.2, right, up, style)
+		task.delay(def.boltTime * 0.15, function()
+			spawnShell(char, from - dir * 1.2, right, up, style)
 		end)
 	else
-		GunFX.Shell(ejectPos(char) or from - dir * 1.2, right, up, style)
+		spawnShell(char, from - dir * 1.2, right, up, style)
 	end
 	GunFX.Tracer(from, to, style)
 	if hit then
@@ -440,7 +451,7 @@ local function fire()
 		local style = GunFX.Style(def.id)
 		GunFX.Muzzle(pOrigin, pDir, style)
 		local right, up = gunAxes(char, pDir)
-		GunFX.Shell(ejectPos(char) or pOrigin - pDir * 1.2, right, up, style)
+		spawnShell(char, pOrigin - pDir * 1.2, right, up, style)
 	else
 		local res = workspace:Raycast(origin, dir * def.range, params)
 		local hitPos = res and res.Position or origin + dir * def.range
@@ -464,7 +475,7 @@ local function fire()
 	if def.boltTime then
 		boltUntil = now + def.boltTime
 		zooming = false
-		task.delay(def.boltTime * 0.45, function()
+		task.delay(def.boltTime * 0.15, function()
 			shake = math.max(shake, 0.12) -- 볼트 "철컥"
 			recoilY += math.rad(0.6)
 		end)

@@ -12,7 +12,7 @@ GunFX.Styles = {
 	AR = { color = Color3.fromRGB(255, 200, 90), width = 0.22, flash = 1.0, shell = "rifle", life = 0.08 },
 	Sniper = { color = Color3.fromRGB(140, 230, 255), width = 0.55, flash = 2.2, shell = "big", life = 0.35 },
 	Revolver = { color = Color3.fromRGB(255, 220, 120), width = 0.32, flash = 1.5, shell = "none", life = 0.12 },
-	ColaCannon = { color = Color3.fromRGB(170, 90, 40), width = 0, flash = 1.8, shell = "can", life = 0 },
+	ColaCannon = { color = Color3.fromRGB(170, 90, 40), width = 0, flash = 1.8, shell = "none", life = 0 }, -- 캔이 탄환이라 옆으로 안 튐
 	ArenaSniper = { color = Color3.fromRGB(255, 70, 70), width = 0.9, flash = 4, shell = "none", life = 0.4 },
 	Default = { color = Color3.fromRGB(255, 220, 140), width = 0.2, flash = 1, shell = "rifle", life = 0.08 },
 }
