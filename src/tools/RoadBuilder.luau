@@ -15,8 +15,8 @@ local ChangeHistoryService = game:GetService("ChangeHistoryService")
 local RoadBuilder = {}
 
 local STYLE = {
-	roadWidth = 30, -- 차도 폭
-	shoulder = 7, -- 양옆 잔디 갓길 폭
+	roadWidth = 46, -- 차도 폭 (넓게: 드리프트/추월 여유)
+	shoulder = 10, -- 양옆 잔디 갓길 폭
 	step = 5, -- 곡선을 이 길이(스터드)마다 나눠서 조각으로 깖
 	groundY = 0, -- 바닥 높이
 	asphalt = Color3.fromRGB(78, 80, 96),
@@ -231,13 +231,7 @@ local function buildRoute(parent: Instance, route)
 		local roadY = mid.Y
 		local heightAboveGround = roadY - STYLE.groundY
 		if A.bridge or B.bridge then
-			if i % 4 == 0 then
-				for _, side in { -1, 1 } do
-					local top = mid + right * side * (W / 2 - 3)
-					local h = top.Y - STYLE.groundY
-					newPart(folder, "Pillar", Vector3.new(3, h, 3), CFrame.new(top.X, STYLE.groundY + h / 2, top.Z), STYLE.pillar, Enum.Material.Concrete)
-				end
-			end
+			-- 기둥 없음 (아래 도로를 막아서 뺌). 다리는 바닥판만으로 떠 있음
 			-- 다리 바닥판 (아래에서 봐도 덜 얇게)
 			newPart(folder, "Deck", Vector3.new(W + S * 2, 2, L), cf(0, -2), STYLE.pillar, Enum.Material.Concrete)
 		elseif heightAboveGround > 1.2 then
