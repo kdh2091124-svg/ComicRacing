@@ -397,7 +397,7 @@ local function rayParams(char: Model, vehicle: Model?): RaycastParams
 	return params
 end
 
-local function fire()
+local function fireInner()
 	local char, hum, vehicle = gunner()
 	local def = currentDef()
 	if not char or not hum or not def then
@@ -484,6 +484,17 @@ local function fire()
 			shake = math.max(shake, 0.12) -- 볼트 "철컥"
 			recoilY += math.rad(0.6)
 		end)
+	end
+end
+
+-- 쏘기 안전장치: 연출 코드에서 에러가 나도 다음 발은 계속 쏠 수 있게 + 출력창에 한 번 알림
+local fireWarned = false
+local vmWarned = false
+local function fire()
+	local ok, err = pcall(fireInner)
+	if not ok and not fireWarned then
+		fireWarned = true
+		warn("[WeaponClient] 쏘기 에러 (이 줄을 개발자에게 보내주세요): " .. tostring(err))
 	end
 end
 
@@ -650,7 +661,8 @@ local function enter(char: Model, vehicle: Model?)
 			elseif not reloading then
 				reloadStart = nil
 			end
-			ViewModel.Update(cam, {
+			-- 안전장치: 1인칭 연출에서 에러가 나도 조준/쏘기는 계속 (출력창에 한 번 알림)
+			local vmOk, vmErr = pcall(ViewModel.Update, cam, {
 				ads = zooming and not scopeOn,
 				hidden = scopeOn,
 				mouseDelta = md,
@@ -659,6 +671,10 @@ local function enter(char: Model, vehicle: Model?)
 				reload = reloadStart and math.clamp((nowT - reloadStart) / def.reloadTime, 0, 1) or nil,
 				dt = dt,
 			})
+			if not vmOk and not vmWarned then
+				vmWarned = true
+				warn("[WeaponClient] 1인칭 무기 연출 에러 (이 줄을 개발자에게 보내주세요): " .. tostring(vmErr))
+			end
 		end
 		-- 조준점 벌어짐 (쏠수록 벌어졌다 모임)
 		-- 조준점 간격 = 실제 탄 퍼짐 범위 그대로 (화면 픽셀로 환산) + 쏠 때 살짝 벌어지는 연출

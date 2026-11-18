@@ -26,12 +26,13 @@ local VM = {
 	kickDamping = 0.42, -- 0.4~0.6 = 살짝 튕기며 복귀 (쫄깃)
 	-- 스웨이: 손목이 아니라 "어깨"를 중심으로 팔째 살짝 늦게 따라옴 + 도는 쪽으로 살짝 기울임
 	shoulderPivot = Vector3.new(0.75, -1.4, 0.7), -- 카메라 기준 오른쪽 어깨 (이 점을 중심으로 흔들림)
-	swayAmount = 0.00008, -- 마우스 속도(픽셀/초) 1 당 흔들림 (라디안)
-	swayMax = 0.16, -- 최대 흔들림 (라디안, 넓게)
-	swayRoll = 0.9, -- 좌우로 돌 때 기울기 비율
-	swayStiffness = 150, -- 기본 당기는 힘
-	swayStiffBoost = 5, -- 많이 밀렸을수록 당기는 힘이 (1 + 밀린비율² × 이 값)배 → 멀면 확 빠르게
-	swayDamping = 0.5, -- 0.4~0.6 = 살짝 튕기며 자리 잡음 (쫄깃), 1 = 출렁임 없음
+	-- (빠르게 돌릴 때 끝에서 "탁 걸리고 휙 튕기던" 문제 → 양 줄이고, 끝 걸림/튕김 없이 부드럽게)
+	swayAmount = 0.00004, -- 마우스 속도(픽셀/초) 1 당 흔들림 (라디안)
+	swayMax = 0.2, -- 최대 흔들림 (넉넉히 → 보통은 닿지 않음)
+	swayRoll = 0.7, -- 좌우로 돌 때 기울기 비율
+	swayStiffness = 110, -- 당기는 힘
+	swayStiffBoost = 0, -- 멀수록 더 세게 당기기 (0 = 끔, 일정하게)
+	swayDamping = 0.95, -- 1 에 가까울수록 튕김 없이 스르륵
 	adsStiffness = 260, -- 조준(우클릭) 들어가는 스프링: 클수록 빠름
 	adsDamping = 0.72, -- 1 보다 작으면 들어가서 살짝 자리 잡음
 	adsDistance = 1.9, -- (무기에 adsDistance 없을 때) "Aim" 점이 조준할 때 눈앞 이 거리에 옴
@@ -553,7 +554,7 @@ function ViewModel.Update(cam: Camera, state)
 	-- 화면을 돌린 반대쪽으로 팔이 살짝 늦게 따라옴
 	-- 마우스 "속도"를 부드럽게 걸러서 목표로 삼음 (프레임마다 튀는 값을 그대로 넣으면 탁탁 걸림)
 	local inst = dt > 0 and md / dt or Vector2.zero
-	mouseVel = mouseVel:Lerp(inst, math.min(dt * 18, 1))
+	mouseVel = mouseVel:Lerp(inst, math.min(dt * 10, 1))
 	local amt = VM.swayAmount * (1 - adsBlend * 0.6)
 	stepSway(swayX, mouseVel.X * amt, dt, VM.swayMax, VM.swayStiffness, VM.swayStiffBoost, VM.swayDamping)
 	stepSway(swayY, mouseVel.Y * amt, dt, VM.swayMax, VM.swayStiffness, VM.swayStiffBoost, VM.swayDamping)
