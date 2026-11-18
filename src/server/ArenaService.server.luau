@@ -196,8 +196,11 @@ RunService.Heartbeat:Connect(function(dt)
 		local gone = not target.Parent or not lock.part.Parent
 			or target:GetAttribute("Exploding") or target:GetAttribute("Exploded")
 		local hum = target:FindFirstChildOfClass("Humanoid")
-		if hum and hum.Health <= 0 then
-			gone = true
+		if hum and (hum.Health <= 0 or hum.SeatPart) then
+			gone = true -- 죽었거나, 부활해서 차에 다시 탐 → 사람 락온 취소 (차가 장외면 차가 따로 락온됨)
+		end
+		if not gone and not ArenaBounds.IsOut(lock.part.Position) then
+			gone = true -- 다시 경기장 안으로 돌아옴 (부활 순간이동 등) → 취소
 		end
 		if gone then
 			clearLock(target)
