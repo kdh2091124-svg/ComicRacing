@@ -923,6 +923,19 @@ end
 local function onCharacter(char: Model)
 	stopDriving()
 	local hum = char:WaitForChild("Humanoid") :: Humanoid
+	-- 다시 태어나면 카메라를 기본 모드로 되돌리고 새 캐릭터를 따라가게
+	-- (죽을 때 운전 카메라가 꺼지면서 대상이 "죽은 캐릭터"로 남아, 죽은 자리만 보이던 문제)
+	local function resetCamera()
+		local cam = workspace.CurrentCamera
+		cam.CameraType = Enum.CameraType.Custom
+		cam.CameraSubject = hum
+	end
+	resetCamera()
+	task.delay(0.2, function()
+		if hum.Parent and not session then
+			resetCamera()
+		end
+	end)
 	hum.Seated:Connect(function(active, seatPart)
 		local inVehicle = active and seatPart and seatPart:IsA("Seat")
 			and seatPart:FindFirstAncestorOfClass("Model") ~= nil

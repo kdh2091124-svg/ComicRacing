@@ -248,7 +248,7 @@ function ChaseCamera.Stop()
 	camera.CameraType = Enum.CameraType.Custom
 	camera.FieldOfView = CamConfig.fov
 	local hum = Players.LocalPlayer.Character and Players.LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-	if hum then
+	if hum and hum.Health > 0 then -- 죽은 캐릭터에 붙이지 않음 (다시 태어나면 새 캐릭터에 붙음)
 		camera.CameraSubject = hum
 	end
 end
