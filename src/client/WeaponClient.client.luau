@@ -430,6 +430,11 @@ local function fire()
 		local ray = cam:ViewportPointToRay(vs.X / 2 + scopeShift.X, vs.Y / 2 + scopeShift.Y)
 		camPos, look = ray.Origin, ray.Direction.Unit
 	end
+	-- 1인칭 총이 반동으로 튄 만큼 총알도 그쪽으로 (조준점도 같이 올라가서 보이는 대로 맞음)
+	if G.firstPerson and not scope.Visible then
+		local kp, ky = ViewModel.AimKick()
+		look = (CFrame.lookAt(Vector3.zero, look) * CFrame.Angles(kp, ky, 0)).LookVector
+	end
 	local aimHit = workspace:Raycast(camPos, look * (def.range + 60), params)
 	local aimPoint = aimHit and aimHit.Position or camPos + look * def.range
 	-- 2) 내 머리에서 그곳으로 (탄 퍼짐 적용)
@@ -470,7 +475,7 @@ local function fire()
 	shake = math.max(shake, def.shake or 0.15)
 	fovKick += def.fovKick or 1
 	bloom = math.min(bloom + (def.auto and 0.25 or 0.8), 1)
-	ViewModel.Kick(def.auto and 0.35 or 1) -- 1인칭 총 반동 모션
+	ViewModel.Kick(def.vmKick or (def.auto and 0.35 or 1)) -- 1인칭 총 반동 모션 (무기별 vmKick)
 	-- 볼트식(스나): 한 발 쏘면 조준 풀리고 볼트 당김 → 그동안 다시 조준 못 함
 	if def.boltTime then
 		boltUntil = now + def.boltTime
@@ -663,6 +668,12 @@ local function enter(char: Model, vehicle: Model?)
 			spreadPx = math.tan(math.rad(currentSpread(def))) / math.tan(half) * cam.ViewportSize.Y / 2
 		end
 		local gap = 6 + math.min(spreadPx, 220) + bloom * 8
+		-- 조준점도 총이 튄 만큼 위로/옆으로 (총알이 가는 곳 그대로)
+		if G.firstPerson then
+			local kp, ky = ViewModel.AimKick()
+			local f = cam.ViewportSize.Y / 2 / math.tan(math.rad(cam.FieldOfView / 2))
+			cross.Position = UDim2.new(0.5, -math.tan(ky) * f, 0.5, -math.tan(kp) * f)
+		end
 		for i, arm in crossArms do
 			local o = CROSS_DIRS[i]
 			arm.Position = UDim2.new(0.5, o[1] * gap, 0.5, o[2] * gap)

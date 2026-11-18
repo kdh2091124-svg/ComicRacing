@@ -34,7 +34,8 @@ local VM = {
 	swayDamping = 0.5, -- 0.4~0.6 = 살짝 튕기며 자리 잡음 (쫄깃), 1 = 출렁임 없음
 	adsStiffness = 260, -- 조준(우클릭) 들어가는 스프링: 클수록 빠름
 	adsDamping = 0.72, -- 1 보다 작으면 들어가서 살짝 자리 잡음
-	adsDistance = 1.9, -- 총에 "Aim" 표시가 있으면 조준할 때 그 점이 눈앞 이 거리에 옴 (너무 가까우면 총 속에서 보는 느낌)
+	adsDistance = 1.9, -- (무기에 adsDistance 없을 때) "Aim" 점이 조준할 때 눈앞 이 거리에 옴
+	aimFollow = 0.6, -- 총이 반동으로 튄 각도 중 총알/조준점이 따라가는 비율
 	raiseTime = 0.32, -- 꺼낼 때 (끝에서 살짝 넘쳤다가 자리)
 	-- 차 관성: 차가 가속/감속/회전하면 총이 반대로 살짝 밀렸다 돌아옴
 	inertia = 0.0022, -- 카메라 가속도 1 당 밀리는 거리
@@ -113,6 +114,7 @@ local hingeLocal: CFrame? = nil -- 리볼버 실린더 경첩 (앞쪽 -Z = 축 �
 local magLoadLocal: CFrame? = nil -- 콜라캐논 캔 넣는 곳 (앞쪽 -Z = 포신 안쪽)
 local canHalf = 0.35 -- 콜라캔 길이 절반
 local modelScale = 1 -- 원본 모델 대비 지금 크기 (거리 값에 곱함)
+local adsDist = 1.9 -- 이 무기의 조준 거리 (WeaponConfig.adsDistance)
 local hasGrip = false
 type ArmSet = { hand: BasePart?, fore: BasePart?, single: BasePart? }
 local rightArm: ArmSet = {}
@@ -315,6 +317,7 @@ function ViewModel.Set(weaponId: string)
 	-- 무기별 길이(WeaponConfig.viewLength)에 맞춰 키우거나 줄임
 	local def = WeaponConfig.Get(weaponId)
 	local want = def and def.viewLength or VM.maxLength
+	adsDist = def and def.adsDistance or VM.adsDistance
 	modelScale = 1
 	if math.abs(len - want) > 0.05 then
 		local s = want / len
@@ -437,6 +440,17 @@ function ViewModel.Kick(strength: number?)
 	kickR.v += (math.random() * 2 - 1) * VM.kickRoll * 60 * s
 end
 
+-- 지금 총이 반동으로 튄 각도 (라디안): 총알/조준점이 이만큼 같이 따라감
+--   pitch = 총구 들림 (위 +), yaw = 비틀림 → 좌우
+function ViewModel.AimKick(): (number, number)
+	if not current or not current.Parent then
+		return 0, 0
+	end
+	local p = math.clamp(kickP.x, -0.2, 0.5) * VM.aimFollow
+	local y = math.clamp(kickR.x, -0.3, 0.3) * VM.aimFollow * 0.5
+	return p, y
+end
+
 local function gunFrame(): CFrame?
 	local gun = current and current:FindFirstChild("Gun")
 	if not gun or not gun:IsA("Model") then
@@ -551,7 +565,7 @@ function ViewModel.Update(cam: Camera, state)
 	local raise = backOut(math.clamp((t - raiseStart) / VM.raiseTime, 0, 1)) -- 꺼낼 때 살짝 넘쳤다 자리
 
 	-- 조준 위치: "Aim" 표시가 있으면 그 점이 화면 정중앙(눈앞)에 오게, 없으면 VM.ads
-	local adsCF = aimLocal and CFrame.new(-aimLocal.X, -aimLocal.Y, -VM.adsDistance - aimLocal.Z) or VM.ads
+	local adsCF = aimLocal and CFrame.new(-aimLocal.X, -aimLocal.Y, -adsDist - aimLocal.Z) or VM.ads
 	local base = VM.hip:Lerp(adsCF, adsBlend)
 	-- 어깨를 중심으로 팔째 흔들림 (조준 중엔 어깨 대신 거의 눈앞 중심)
 	local sx = soft(swayX.x, VM.swayMax)
