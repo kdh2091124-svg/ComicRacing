@@ -112,10 +112,10 @@ WeaponConfig.General = {
 	firstPerson = true, -- true = 1인칭 (눈 위치, 내 몸 안 보임) / false = 어깨 너머 3인칭
 	eyeOffset = Vector3.new(0, 0.35, 0), -- 1인칭 눈 위치 (머리 중심 기준)
 	cameraOffset = Vector3.new(2.2, 2.4, 9), -- 3인칭일 때 머리 기준 오른쪽, 위, 뒤
-	-- 조준경 흐림 (scopeOverlay 무기): 흐린 만큼 탄이 튐, 선명하면 똑바로
-	scopeTurnBlur = 0.015, -- 화면을 돌린 만큼 흐려짐 (마우스 1픽셀당)
-	scopeSettle = 3.5, -- 돌리기 멈추면 선명해지는 빠르기 (초당)
-	scopeBlurSize = 22, -- 가장 흐릴 때 흐림 세기
+	-- 조준경 그림자 (scopeOverlay 무기). 정확도는 줌 켠 직후(scopeTime)만 영향, 돌리는 건 연출만
+	scopeTurnShade = 0.012, -- 화면을 돌린 만큼 가장자리 그림자 진해짐 (마우스 1픽셀당)
+	scopeSettle = 3.5, -- 돌리기 멈추면 그림자 빠지는 빠르기 (초당)
+	scopeShift = 0.45, -- 휙 돌릴 때 렌즈가 반대로 밀리는 양 (마우스 1픽셀당 화면 픽셀)
 	mouseSensitivity = 0.0035,
 	zoomSensitivityScale = 0.4, -- 조준 중엔 마우스가 이만큼 느리게
 	recoilRecover = 6, -- 반동이 원래 조준으로 돌아오는 빠르기 (클수록 빨리)

@@ -13,6 +13,7 @@ local Debris = game:GetService("Debris")
 
 local WeaponConfig = require(ReplicatedStorage.Shared.Config.WeaponConfig)
 local GunFX = require(script.Parent:WaitForChild("GunFX"))
+local ViewModel = require(script.Parent:WaitForChild("ViewModel"))
 local G = WeaponConfig.General
 local Remote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Weapon") :: RemoteEvent
 
@@ -76,71 +77,103 @@ for _, o in CROSS_DIRS do
 	table.insert(crossArms, arm)
 end
 
--- 조준경 화면: 가운데 동그란 렌즈 + 십자선, 렌즈 바깥은 반투명 어두운 검정
---   (이미지 없이: 아주 두꺼운 테두리(UIStroke)를 단 원 = 바깥을 덮는 어두운 판)
+-- 조준경 화면 (실제 저격 스코프 느낌)
+--   렌즈 바깥 = 거의 검정, 렌즈 가장자리 = 부드러운 그림자(비네팅), 아주 옅은 렌즈 색
+--   십자선 = 바깥쪽은 굵은 기둥, 가운데로 갈수록 가는 선 + 거리 눈금 점 + 작은 빨간 중앙점
+--   줌 켤 때 그림자가 조였다 열리고, 휙 돌리면 렌즈가 살짝 밀리며 그림자가 진해짐 (정확도와는 상관없음)
+--   (이미지 없이: 두꺼운 테두리(UIStroke)를 단 원 여러 겹)
 local scope = Instance.new("Frame")
 scope.Name = "Scope"
 scope.AnchorPoint = Vector2.new(0.5, 0.5)
 scope.Position = UDim2.fromScale(0.5, 0.5)
-scope.Size = UDim2.fromScale(0.82, 0.82)
+scope.Size = UDim2.fromScale(0.9, 0.9)
 scope.BackgroundTransparency = 1
 scope.Visible = false
 scope.ZIndex = 5
 scope.Parent = gui
+local vignetteRings: { UIStroke } = {}
+local scopeDarkIn: Frame -- 줌 켤 때 렌즈 안이 어두웠다 밝아지는 막
 do
 	local ratio = Instance.new("UIAspectRatioConstraint")
 	ratio.AspectRatio = 1
 	ratio.DominantAxis = Enum.DominantAxis.Height
 	ratio.Parent = scope
-	local round = Instance.new("UICorner")
-	round.CornerRadius = UDim.new(1, 0)
-	round.Parent = scope
-	local dark = Instance.new("UIStroke") -- 렌즈 바깥 전체를 덮는 어두운 판
-	dark.Thickness = 2500
-	dark.Color = Color3.new(0, 0, 0)
-	dark.Transparency = 0.22
-	dark.Parent = scope
-	local rim = Instance.new("Frame") -- 렌즈 테두리 (진한 검정 고리)
-	rim.AnchorPoint = Vector2.new(0.5, 0.5)
-	rim.Position = UDim2.fromScale(0.5, 0.5)
-	rim.Size = UDim2.fromScale(1, 1)
-	rim.BackgroundTransparency = 1
-	rim.Parent = scope
-	local rimRound = Instance.new("UICorner")
-	rimRound.CornerRadius = UDim.new(1, 0)
-	rimRound.Parent = rim
-	local rimStroke = Instance.new("UIStroke")
-	rimStroke.Thickness = 6
-	rimStroke.Color = Color3.new(0, 0, 0)
-	rimStroke.Parent = rim
-	-- 십자선 (+): 가운데는 비워서 정확히 보이게
-	for _, spec in {
-		{ UDim2.new(0, 2, 0.46, 0), UDim2.fromScale(0.5, 0.25) },
-		{ UDim2.new(0, 2, 0.46, 0), UDim2.fromScale(0.5, 0.75) },
-		{ UDim2.new(0.46, 0, 0, 2), UDim2.fromScale(0.25, 0.5) },
-		{ UDim2.new(0.46, 0, 0, 2), UDim2.fromScale(0.75, 0.5) },
-	} do
-		local line = Instance.new("Frame")
-		line.AnchorPoint = Vector2.new(0.5, 0.5)
-		line.Size = spec[1]
-		line.Position = spec[2]
-		line.BackgroundColor3 = Color3.new(0, 0, 0)
-		line.BorderSizePixel = 0
-		line.Parent = scope
+	local function circle(parent: Instance, scale: number): Frame
+		local f = Instance.new("Frame")
+		f.AnchorPoint = Vector2.new(0.5, 0.5)
+		f.Position = UDim2.fromScale(0.5, 0.5)
+		f.Size = UDim2.fromScale(scale, scale)
+		f.BackgroundTransparency = 1
+		f.Parent = parent
+		local r = Instance.new("UICorner")
+		r.CornerRadius = UDim.new(1, 0)
+		r.Parent = f
+		return f
 	end
-	local dot = Instance.new("Frame")
-	dot.AnchorPoint = Vector2.new(0.5, 0.5)
-	dot.Position = UDim2.fromScale(0.5, 0.5)
-	dot.Size = UDim2.fromOffset(4, 4)
-	dot.BackgroundColor3 = Color3.fromRGB(255, 40, 40)
-	dot.BorderSizePixel = 0
-	dot.Parent = scope
+	local outer = Instance.new("UIStroke") -- 렌즈 바깥 전체 (거의 검정)
+	outer.Thickness = 3000
+	outer.Color = Color3.fromRGB(4, 5, 6)
+	outer.Transparency = 0.04
+	outer.Parent = circle(scope, 1)
+	-- 가장자리 그림자: 안쪽으로 갈수록 옅어지는 고리 여러 겹 (두께는 화면 크기에 맞춰 매 프레임)
+	for i = 1, 7 do
+		local s = Instance.new("UIStroke")
+		s.Color = Color3.new(0, 0, 0)
+		s.Transparency = 0.35 + i * 0.09
+		s.Parent = circle(scope, 1 - i * 0.022)
+		table.insert(vignetteRings, s)
+	end
+	local tint = circle(scope, 1) -- 아주 옅은 렌즈 색
+	tint.BackgroundTransparency = 0.94
+	tint.BackgroundColor3 = Color3.fromRGB(40, 80, 90)
+	scopeDarkIn = circle(scope, 1)
+	scopeDarkIn.BackgroundColor3 = Color3.new(0, 0, 0)
+	scopeDarkIn.BackgroundTransparency = 1
+	local INK = Color3.fromRGB(10, 10, 12)
+	local function bar(size: UDim2, pos: UDim2)
+		local b = Instance.new("Frame")
+		b.AnchorPoint = Vector2.new(0.5, 0.5)
+		b.Size = size
+		b.Position = pos
+		b.BackgroundColor3 = INK
+		b.BorderSizePixel = 0
+		b.Parent = scope
+	end
+	-- 굵은 기둥 (가장자리 → 중심 30% 지점까지)
+	bar(UDim2.new(0, 5, 0.32, 0), UDim2.fromScale(0.5, 0.16))
+	bar(UDim2.new(0, 5, 0.32, 0), UDim2.fromScale(0.5, 0.84))
+	bar(UDim2.new(0.32, 0, 0, 5), UDim2.fromScale(0.16, 0.5))
+	bar(UDim2.new(0.32, 0, 0, 5), UDim2.fromScale(0.84, 0.5))
+	-- 가는 선 (중심까지)
+	bar(UDim2.new(0, 1, 0.36, 0), UDim2.fromScale(0.5, 0.5))
+	bar(UDim2.new(0.36, 0, 0, 1), UDim2.fromScale(0.5, 0.5))
+	-- 거리 눈금 점 (가는 선 위)
+	for k = 1, 4 do
+		local d = k * 0.035
+		for _, p in { { 0.5, 0.5 + d }, { 0.5, 0.5 - d }, { 0.5 + d, 0.5 }, { 0.5 - d, 0.5 } } do
+			local dot = Instance.new("Frame")
+			dot.AnchorPoint = Vector2.new(0.5, 0.5)
+			dot.Position = UDim2.fromScale(p[1], p[2])
+			dot.Size = UDim2.fromOffset(4, 4)
+			dot.BackgroundColor3 = INK
+			dot.BorderSizePixel = 0
+			dot.Parent = scope
+			local r = Instance.new("UICorner")
+			r.CornerRadius = UDim.new(1, 0)
+			r.Parent = dot
+		end
+	end
+	-- 작은 빨간 중앙점 (조명 레티클)
+	local center = Instance.new("Frame")
+	center.AnchorPoint = Vector2.new(0.5, 0.5)
+	center.Position = UDim2.fromScale(0.5, 0.5)
+	center.Size = UDim2.fromOffset(3, 3)
+	center.BackgroundColor3 = Color3.fromRGB(255, 50, 40)
+	center.BorderSizePixel = 0
+	center.Parent = scope
 end
-
--- 화면 흐림 (조준경이 덜 맞춰졌을 때). 내 화면 전용 (카메라 안에 넣음)
-local blur = Instance.new("BlurEffect")
-blur.Size = 0
-blur.Enabled = false
+local scopeShift = Vector2.zero -- 휙 돌릴 때 렌즈가 밀리는 양 (픽셀)
+local turnShade = 0 -- 휙 돌릴 때 그림자 진해짐 (0~1)
 
 local hitMark = Instance.new("Frame")
 hitMark.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -251,8 +284,9 @@ local function updateScopeBlur(def, dt: number, mouseMove: number)
 	if def.scopeTime and def.scopeTime > 0 then
 		scopeIn = 1 - math.clamp((os.clock() - zoomStart) / def.scopeTime, 0, 1)
 	end
-	turnBlur = math.clamp(turnBlur + mouseMove * G.scopeTurnBlur - dt * G.scopeSettle, 0, 1)
-	scopeBlur = math.max(scopeIn, turnBlur)
+	-- 정확도는 "줌 켠 직후"만 영향. 화면 돌리는 건 그림자 연출만 (탄 안 튐)
+	turnBlur = math.clamp(turnBlur + mouseMove * G.scopeTurnShade - dt * G.scopeSettle, 0, 1)
+	scopeBlur = scopeIn
 end
 
 local function currentSpread(def): number
@@ -284,6 +318,13 @@ end
 
 -- 총 방향 (탄피 튀는 방향용): 총 모델이 있으면 그 오른쪽/위, 없으면 기본값
 local function gunAxes(char: Model?, fallbackDir: Vector3): (Vector3, Vector3)
+	-- 내 1인칭 총이 있으면 그 방향 (탄피가 화면에서 자연스럽게 튐)
+	if char and char == player.Character and G.firstPerson then
+		local r, u = ViewModel.Axes()
+		if r and u then
+			return r, u
+		end
+	end
 	local gun = char and char:FindFirstChild("GunnerWeapon")
 	local handle = gun and gun:IsA("Model") and gun.PrimaryPart
 	if handle then
@@ -363,10 +404,10 @@ local function fire()
 		local off = math.rad(spreadDeg) * math.sqrt(math.random())
 		dir =(CFrame.lookAt(origin, origin + dir) * CFrame.Angles(0, 0, spin) * CFrame.Angles(off, 0, 0)).LookVector
 	end
-	local from = muzzlePos(char) or origin
+	local from = (G.firstPerson and ViewModel.MuzzlePosition()) or muzzlePos(char) or origin
 	if def.kind == "projectile" then
 		-- 날아가는 탄은 눈에 보이니까 총구에서 출발 (조준점 쪽으로)
-		local pOrigin = muzzlePos(char) or origin
+		local pOrigin = from -- 1인칭이면 내 화면 총구
 		local pDir = (aimPoint - pOrigin)
 		pDir = pDir.Magnitude > 0.1 and pDir.Unit or dir
 		Remote:FireServer("FireProjectile", pOrigin, pDir)
@@ -389,6 +430,7 @@ local function fire()
 	shake = math.max(shake, def.shake or 0.15)
 	fovKick += def.fovKick or 1
 	bloom = math.min(bloom + (def.auto and 0.25 or 0.8), 1)
+	ViewModel.Kick(def.auto and 0.35 or 1) -- 1인칭 총 반동 모션
 	-- 볼트식(스나): 한 발 쏘면 조준 풀리고 볼트 당김 → 그동안 다시 조준 못 함
 	if def.boltTime then
 		boltUntil = now + def.boltTime
@@ -510,9 +552,43 @@ local function enter(char: Model, vehicle: Model?)
 		local scopeOn = zooming and def ~= nil and def.scopeOverlay == true
 		scope.Visible = scopeOn
 		cross.Visible = not scopeOn
-		blur.Parent = cam
-		blur.Enabled = scopeOn and scopeBlur > 0.01
-		blur.Size = scopeBlur * G.scopeBlurSize
+		if scopeOn then
+			-- 휙 돌리면 렌즈가 반대로 살짝 밀렸다 돌아옴 + 가장자리 그림자 진해짐
+			scopeShift += Vector2.new(-md.X, -md.Y) * G.scopeShift
+			if scopeShift.Magnitude > 70 then
+				scopeShift = scopeShift.Unit * 70
+			end
+			scopeShift -= scopeShift * math.min(dt * 8, 1)
+			local h = scope.AbsoluteSize.Y
+			-- 줌 켤 때: 렌즈가 작고 그림자 짙음 → 열리며 선명해짐
+			local s = 0.9 * (1 - 0.12 * scopeBlur)
+			scope.Size = UDim2.fromScale(s, s)
+			scope.Position = UDim2.new(0.5, scopeShift.X, 0.5, scopeShift.Y)
+			local shade = math.max(scopeBlur, turnBlur * 0.8)
+			for i, ring in vignetteRings do
+				ring.Thickness = h * (0.016 + 0.035 * shade) * (1 + i * 0.1)
+			end
+			scopeDarkIn.BackgroundTransparency = 1 - scopeBlur * 0.7
+		else
+			scopeShift = Vector2.zero
+		end
+		-- 1인칭 내 무기
+		if G.firstPerson and def then
+			local armPart = c:FindFirstChild("Right Arm") or c:FindFirstChild("RightHand")
+			ViewModel.Set(def.id, armPart and armPart:IsA("BasePart") and armPart.Color or nil)
+			local boltProgress = nil
+			if nowT < boltUntil and def.boltTime then
+				boltProgress = 1 - (boltUntil - nowT) / def.boltTime
+			end
+			ViewModel.Update(cam, {
+				ads = zooming and not scopeOn,
+				hidden = scopeOn,
+				mouseDelta = md,
+				bolt = boltProgress,
+				reload = player:GetAttribute("Reloading") == true,
+				dt = dt,
+			})
+		end
 		-- 조준점 벌어짐 (쏠수록 벌어졌다 모임)
 		local gap = 10 + bloom * 26 + (def and math.min(currentSpread(def), 8) * 5 or 0)
 		for i, arm in crossArms do
@@ -544,8 +620,8 @@ local function exit()
 	end
 	scope.Visible = false
 	cross.Visible = true
-	blur.Enabled = false
 	turnBlur, scopeBlur = 0, 0
+	ViewModel.Destroy()
 	-- 1인칭에서 숨겼던 내 몸 다시 보이게
 	if player.Character then
 		for _, d in player.Character:GetDescendants() do
