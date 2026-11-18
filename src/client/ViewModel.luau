@@ -58,6 +58,8 @@ local VM = {
 	canLift = 0.65, -- 장전: 컵에서 위로 뽑는 거리
 	canPush = 0.3, -- 장전: 포신 안으로 밀어 넣는 거리 (캔 길이 절반에 더해짐)
 	boltAnimPortion = 0.75, -- boltTime 중 볼트 동작이 차지하는 비율 (나머지는 제자리)
+	reloadBoltStart = 0.63, -- 장전 진행도 중 탄창 꽂은 뒤 노리쇠 후퇴→전진 시작
+	reloadBoltEnd = 0.86, -- 끝
 	sleeveColor = Color3.fromRGB(60, 70, 90), -- 팔을 못 가져올 때 대신 쓰는 색
 }
 ViewModel.Settings = VM
@@ -567,7 +569,7 @@ function ViewModel.Update(cam: Camera, state)
 	if state.reload then
 		-- 비틀며 들기(살짝 넘침) → 탄창 확 빼기 → 꽂기 → 탁(충격) → 제자리(살짝 넘침)
 		local tiltIn = backOut(math.clamp(r / 0.14, 0, 1))
-		local tiltOut = 1 - backOut(math.clamp((r - 0.82) / 0.18, 0, 1))
+		local tiltOut = 1 - backOut(math.clamp((r - 0.86) / 0.14, 0, 1)) -- 노리쇠 후퇴전진까지 끝나고 제자리
 		local tilt = math.min(tiltIn, tiltOut)
 		local out = smooth(0.14, 0.26, r) * (1 - smooth(0.46, 0.6, r))
 		cf *= CFrame.new(0.08 * tilt, -0.2 * tilt, 0.05 * tilt) * CFrame.Angles(math.rad(-8) * tilt, math.rad(18) * tilt, math.rad(38) * tilt)
@@ -583,24 +585,34 @@ function ViewModel.Update(cam: Camera, state)
 	prevReload = r
 	-- 볼트: 굴리기 → 당기기 → 밀기 → 복귀 (boltAnimPortion 안에 빠르게 끝냄)
 	local pull, lift = 0, 0
-	local bNow = state.bolt and math.clamp(state.bolt / VM.boltAnimPortion, 0, 1) or 0
-	-- 볼트 당길 때 철컥, 밀어 넣을 때 탁 (스프링 충격)
+	-- 볼트 동작 진행도 b (0~1): 쏜 뒤 볼트(스나) 또는 장전 끝의 노리쇠 후퇴→전진(AR/스나)
+	local boltB: number? = nil
 	if state.bolt then
+		boltB = math.clamp(state.bolt / VM.boltAnimPortion, 0, 1)
+	elseif state.reload and boltSet and r >= VM.reloadBoltStart and r <= VM.reloadBoltEnd then
+		boltB = (r - VM.reloadBoltStart) / (VM.reloadBoltEnd - VM.reloadBoltStart)
+	end
+	local bNow = boltB or 0
+	-- 볼트 당길 때 철컥, 밀어 넣을 때 탁 (스프링 충격)
+	if boltB then
 		if prevBolt < 0.2 and bNow >= 0.2 then
-			jolt(0.12, 0.05, 0.08)
+			jolt(0.12, 0.05, -0.08)
 		end
 		if prevBolt < 0.6 and bNow >= 0.6 then
-			jolt(-0.1, -0.06, -0.06)
+			jolt(-0.1, -0.06, 0.06)
 		end
 	end
 	prevBolt = bNow
-	if state.bolt then
-		local b = bNow
+	if boltB then
+		local b = boltB
+		-- 볼트식(스나)은 손잡이 들기/내리기 + 총을 크게 굴림, AR 은 그냥 당겼다 놓기 + 살짝 굴림
+		local rollAmt = state.boltAction and 24 or 12
 		local roll = smooth(0, 0.15, b) * (1 - smooth(0.7, 0.9, b))
-		lift = smooth(0.05, 0.15, b) * (1 - smooth(0.62, 0.72, b)) -- 손잡이 들기 → (당기고 밀고) → 내리기
+		lift = state.boltAction and smooth(0.05, 0.15, b) * (1 - smooth(0.62, 0.72, b)) or 0
 		pull = smooth(0.15, 0.35, b) * (1 - smooth(0.45, 0.62, b))
 		local thud = smooth(0.58, 0.63, b) * (1 - smooth(0.63, 0.75, b)) -- 밀어 넣을 때 탁
-		cf *= CFrame.Angles(math.rad(4) * roll, 0, math.rad(-24) * roll) * CFrame.new(0.05 * roll, -0.06 * roll, 0)
+		-- 총을 왼쪽으로 굴려서 오른쪽 볼트가 보이게 (예전 반대 방향)
+		cf *= CFrame.Angles(math.rad(4) * roll, 0, math.rad(rollAmt) * roll) * CFrame.new(-0.05 * roll, -0.06 * roll, 0)
 		cf *= CFrame.new(0, 0, -0.05 * thud) * CFrame.Angles(math.rad(-3) * thud, 0, 0)
 	end
 
@@ -625,12 +637,12 @@ function ViewModel.Update(cam: Camera, state)
 	end
 	-- 스나 볼트 창 덮개: 당기는 순간 확 열리고(덜컹), 다 밀면 닫히며 한 번 더 덜컹
 	if coverSet then
-		local b = state.bolt and math.clamp(state.bolt / VM.boltAnimPortion, 0, 1) or 0
-		local open = state.bolt and (smooth(0.15, 0.2, b) * (1 - smooth(0.62, 0.66, b))) or 0
+		local b = boltB or 0
+		local open = boltB and (smooth(0.15, 0.2, b) * (1 - smooth(0.62, 0.66, b))) or 0
 		local w1 = math.clamp((b - 0.2) / 0.14, 0, 1) -- 열린 뒤 덜컹
 		local w2 = math.clamp((b - 0.66) / 0.12, 0, 1) -- 닫힌 뒤 덜컹
 		local bounce = 0
-		if state.bolt then
+		if boltB then
 			bounce = -VM.coverBounce * math.sin(w1 * math.pi * 2) * (1 - w1)
 				+ VM.coverBounce * 0.5 * math.sin(w2 * math.pi * 2) * (1 - w2) * (w2 > 0 and 1 or 0)
 		end

@@ -650,6 +650,7 @@ local function enter(char: Model, vehicle: Model?)
 				hidden = scopeOn,
 				mouseDelta = md,
 				bolt = boltProgress,
+				boltAction = def.boltTime ~= nil, -- 볼트식(스나): 손잡이 들기/내리기까지
 				reload = reloadStart and math.clamp((nowT - reloadStart) / def.reloadTime, 0, 1) or nil,
 				dt = dt,
 			})
