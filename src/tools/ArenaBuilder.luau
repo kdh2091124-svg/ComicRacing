@@ -40,7 +40,9 @@ local A = {
 	-- 바깥 벽, 바깥 데크
 	wallHeight = 8,
 	deckWidth = 140,
-	-- 바깥 벽 뚫린 곳 (벽/데크 없음 → 밀려나면 바깥으로 떨어져 장외). 경사로 합류 구간은 피해서
+	-- true 면 바깥 벽/데크 전부 없음 → 바깥 가장자리 어디서든 떨어져 장외 (안쪽 구멍처럼 연석만)
+	outerOpen = true,
+	-- outerOpen = false 일 때만: 벽 뚫린 곳 (경사로 합류 구간은 피해서)
 	gaps = {
 		{ centerDeg = 78, widthDeg = 14 },
 		{ centerDeg = 168, widthDeg = 14 },
@@ -279,6 +281,9 @@ function ArenaBuilder.Build(options: { keepTerrain: boolean? }?)
 	-- 5) 바깥 벽 + 바깥 데크 (뚫린 곳은 빼고, 대신 가장자리에 빨강/흰 경고 연석)
 	local outer = rings[1]
 	local function inGap(th: number): boolean
+		if A.outerOpen then
+			return true
+		end
 		local deg = math.deg(th)
 		for _, g in A.gaps do
 			local d = (deg - g.centerDeg + 180) % 360 - 180
@@ -309,9 +314,10 @@ function ArenaBuilder.Build(options: { keepTerrain: boolean? }?)
 		local ring = rings[spec.ring]
 		assert(ring, "[ArenaBuilder] plows.ring " .. tostring(spec.ring) .. " 고리가 없어요")
 		local pushOut = spec.push == "out"
-		-- 밀려가는 쪽 끝은 여유를 둬서 차가 끼지 않고 날 끝으로 빠져나가게
+		-- 바깥 고리에 벽이 있으면 밀려가는 끝에 여유를 둬서 차가 벽과 날 사이에 끼지 않게
+		local walled = spec.ring == 1 and not A.outerOpen
 		local rIn = ring.r0 + (pushOut and 4 or 2)
-		local rOut = ring.r1 - (pushOut and 12 or 4)
+		local rOut = ring.r1 - (pushOut and (walled and 12 or 2) or 4)
 		local rm = (rIn + rOut) / 2
 		local psi = math.rad(A.plowAngleDeg) * spec.dir * (pushOut and 1 or -1)
 		local len = (rOut - rIn) / math.cos(psi)
@@ -404,7 +410,7 @@ function ArenaBuilder.Build(options: { keepTerrain: boolean? }?)
 			parts += 1
 		end
 	end
-	print(string.format("[ArenaBuilder] 완료: 파트 %d개, 경사로 %d개 (최대 기울기 %.1f°), 벽 뚫린 곳 %d개, 회전 쟁기 %d개", parts, #rampList, math.deg(math.atan(maxGrade)), #A.gaps, plowCount))
+	print(string.format("[ArenaBuilder] 완료: 파트 %d개, 경사로 %d개 (최대 기울기 %.1f°), 바깥 %s, 회전 쟁기 %d개", parts, #rampList, math.deg(math.atan(maxGrade)), A.outerOpen and "전부 뚫림" or (#A.gaps .. "군데 뚫림"), plowCount))
 	for _, w in warnings do
 		warn("[ArenaBuilder] " .. w)
 	end
