@@ -229,7 +229,11 @@ local function fire()
 	end
 	local from = muzzlePos(char) or origin
 	if def.kind == "projectile" then
-		Remote:FireServer("FireProjectile", origin, dir)
+		-- 날아가는 탄은 눈에 보이니까 총구에서 출발 (조준점 쪽으로)
+		local pOrigin = muzzlePos(char) or origin
+		local pDir = (aimPoint - pOrigin)
+		pDir = pDir.Magnitude > 0.1 and pDir.Unit or dir
+		Remote:FireServer("FireProjectile", pOrigin, pDir)
 	else
 		local res = workspace:Raycast(origin, dir * def.range, params)
 		local hitPos = res and res.Position or origin + dir * def.range
