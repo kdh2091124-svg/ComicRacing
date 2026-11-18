@@ -139,6 +139,7 @@ local lSmooth: Vector3? = nil
 type CylRound = { part: BasePart, idx: number } -- 리볼버 실린더 약실 탄 (쏘면 빈 탄피 색)
 local cylRounds: { CylRound } = {}
 local cylSpent = { false, false, false, false, false, false } -- 약실별 쏜 탄 (빈 탄피)
+local lastShellR = 0 -- 지난 프레임 장전 진행도 (탄피가 빠지는 순간 감지)
 
 -- 지금 맨 위(총열 앞)에 있는 약실 번호 (실린더가 60°씩 돌 때마다 바뀜)
 local function topChamber(angle: number): number
@@ -208,7 +209,7 @@ end
 type Flying = { model: Model, parts: { { part: BasePart, rel: CFrame } }, pos: Vector3, rot: CFrame, vel: Vector3, ang: Vector3, age: number }
 local flying: { Flying } = {}
 
-local function throwParts(list: { { part: BasePart, world: CFrame } }, vel: Vector3, ang: Vector3)
+local function throwParts(list: { { part: BasePart, world: CFrame } }, vel: Vector3, ang: Vector3, color: Color3?)
 	if #list == 0 then
 		return
 	end
@@ -228,6 +229,9 @@ local function throwParts(list: { { part: BasePart, world: CFrame } }, vel: Vect
 		c.CanQuery = false
 		c.CanTouch = false
 		c.LocalTransparencyModifier = 0
+		if color then
+			c.Color = color
+		end
 		c.Parent = m
 		table.insert(parts, { part = c, rel = CFrame.new(-center) * e.world })
 	end
@@ -1041,9 +1045,11 @@ function ViewModel.Update(cam: Camera, state)
 		local flick = pop(0.61, 0.64) * (1 - smooth(0.66, 0.82, r))
 		-- 각도 (총 기준): Z+ = 총 위쪽이 왼쪽, Z- = 오른쪽 / X- = 총구 아래
 		-- (세울 때 몸 쪽으로 당겨오지 않게 손을 살짝 앞·위로)
-		cf *= CFrame.new(0.03 * tilt * S0, (-0.08 * tilt + 0.12 * muzzleUp) * S0, -0.2 * muzzleUp * S0)
+		-- 탄피 뺄 땐 팔은 거의 그대로 두고 손목만 살짝 젖혀서 총구를 위로 (팔째 번쩍 드는 인위적인 느낌 없게)
+		cf *= aboutPoint(Vector3.new(0, -0.08 * S0, 0.2 * S0), CFrame.Angles(math.rad(28) * muzzleUp, 0, 0))
+		cf *= CFrame.new(0.03 * tilt * S0, -0.08 * tilt * S0, 0)
 			* aboutPoint(elbow, CFrame.Angles(
-				math.rad(-5) * tilt + math.rad(40) * muzzleUp, -- 탄피 뺄 땐 총구 위로, 장전 땐 아주 살짝 아래
+				math.rad(-5) * tilt + math.rad(6) * muzzleUp, -- 장전 땐 아주 살짝 아래
 				0,
 				math.rad(40) * snapL - math.rad(18) * tilt + math.rad(12) * windL - math.rad(28) * flick -- 왼쪽 탁 / 오른쪽 살짝 / 왼쪽 준비 / 오른쪽 탁
 			))
@@ -1212,6 +1218,29 @@ function ViewModel.Update(cam: Camera, state)
 			swing = about(cylSet.pivot + Vector3.new(0, -0.12 * S, 0), CFrame.Angles(0, 0, math.rad(VM.cylinderSwing) * cylOpen))
 		end
 		apply(cylSet, swing * about(cylSet.pivot, CFrame.Angles(0, 0, cylAngle)))
+		-- 장전 중 탄피 빼기: 각 약실의 탄이 실린더 뒤쪽으로 쑥 미끄러져 나와서 그대로 떨어짐
+		--   (탄 파트의 원통 축 = 로컬 X, +X 가 총구 쪽 → 뒤로 빠지는 방향은 -X)
+		if style == "revolver" and state.reload then
+			for _, cr in cylRounds do
+				local th = REVOLVER_SHELL + cr.idx * REVOLVER_SHELL_GAP
+				local slideStart = th - REVOLVER_SHELL_GAP * 1.5
+				if r >= slideStart and r < th then
+					-- 빠지기 직전: 약실에서 뒤로 스르륵 (쏜 칸도 빈 탄피가 보이며 나옴)
+					local u = (r - slideStart) / (th - slideStart)
+					cr.part.CFrame *= CFrame.new(-cr.part.Size.X * 0.7 * u * u, 0, 0)
+					cr.part.LocalTransparencyModifier = 0
+				end
+				if lastShellR < th and r >= th then
+					local back = -cr.part.CFrame.RightVector -- 실린더 뒤쪽
+					local w = cr.part.CFrame * CFrame.new(-cr.part.Size.X * 0.7, 0, 0)
+					throwParts({ { part = cr.part, world = w } },
+						back * 3 + Vector3.new(math.random() - 0.5, 0, math.random() - 0.5) * 0.6,
+						Vector3.new(math.random() - 0.5, math.random() - 0.5, math.random() - 0.5) * 8,
+						cylSpent[cr.idx + 1] and Color3.fromRGB(150, 110, 50) or nil) -- 쏜 탄은 어두운 빈 탄피
+				end
+			end
+		end
+		lastShellR = (style == "revolver" and state.reload) and r or 0
 	end
 	-- 공이치기: 쏘는 순간 X축 +35° 젖혀졌다가 탁 떨어짐 (평소엔 내려가 있음)
 	if hammerSet then
