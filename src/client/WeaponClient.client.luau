@@ -336,6 +336,24 @@ local function gunAxes(char: Model?, fallbackDir: Vector3): (Vector3, Vector3)
 	return right.Magnitude > 0.01 and right.Unit or Vector3.xAxis, Vector3.yAxis
 end
 
+-- 탄피 배출구: 내 1인칭 총의 "Eject" → 남의 손 총의 "Eject" → 없으면 nil (총구 뒤쪽에서 대충)
+local function ejectPos(char: Model?): Vector3?
+	if char and char == player.Character and G.firstPerson then
+		local p = ViewModel.EjectPosition()
+		if p then
+			return p
+		end
+	end
+	local gun = char and char:FindFirstChild("GunnerWeapon")
+	local e = gun and gun:FindFirstChild("Eject", true)
+	if e and e:IsA("Attachment") then
+		return e.WorldPosition
+	elseif e and e:IsA("BasePart") then
+		return e.Position
+	end
+	return nil
+end
+
 -- 쏘는 연출 한 세트: 섬광 + 탄피 + 줄기 + 맞은 자리
 local function shotFX(char: Model?, weaponId: string?, from: Vector3, to: Vector3, hitInst: Instance?, normal: Vector3?, hit: boolean)
 	local style = GunFX.Style(weaponId)
@@ -346,10 +364,10 @@ local function shotFX(char: Model?, weaponId: string?, from: Vector3, to: Vector
 	if def and def.boltTime then
 		-- 볼트식: 탄피는 쏠 때가 아니라 볼트 당길 때 튐
 		task.delay(def.boltTime * 0.45, function()
-			GunFX.Shell(muzzlePos(char) or from, right, up, style)
+			GunFX.Shell(ejectPos(char) or from - dir * 1.2, right, up, style)
 		end)
 	else
-		GunFX.Shell(from - dir * 1.2, right, up, style)
+		GunFX.Shell(ejectPos(char) or from - dir * 1.2, right, up, style)
 	end
 	GunFX.Tracer(from, to, style)
 	if hit then
@@ -416,7 +434,7 @@ local function fire()
 		local style = GunFX.Style(def.id)
 		GunFX.Muzzle(pOrigin, pDir, style)
 		local right, up = gunAxes(char, pDir)
-		GunFX.Shell(pOrigin - pDir * 1.2, right, up, style)
+		GunFX.Shell(ejectPos(char) or pOrigin - pDir * 1.2, right, up, style)
 	else
 		local res = workspace:Raycast(origin, dir * def.range, params)
 		local hitPos = res and res.Position or origin + dir * def.range
@@ -596,6 +614,17 @@ local function enter(char: Model, vehicle: Model?)
 			local reloading = player:GetAttribute("Reloading") == true
 			if reloading and not reloadStart then
 				reloadStart = nowT
+				-- 리볼버: 실린더가 열리면 빈 탄피 6개가 쏟아짐
+				if ViewModel.CylinderPosition() then
+					task.delay(def.reloadTime * 0.3, function()
+						local p = ViewModel.CylinderPosition()
+						if p then
+							for _ = 1, 6 do
+								GunFX.Shell(p, Vector3.new(math.random() - 0.5, -1, math.random() - 0.5) * 0.4, -Vector3.yAxis * 0.3, { shell = "rifle" })
+							end
+						end
+					end)
+				end
 			elseif not reloading then
 				reloadStart = nil
 			end

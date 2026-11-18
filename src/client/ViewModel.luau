@@ -26,12 +26,13 @@ local VM = {
 	kickDamping = 0.42, -- 0.4~0.6 = 살짝 튕기며 복귀 (쫄깃)
 	-- 스웨이: 손목이 아니라 "어깨"를 중심으로 팔째 살짝 늦게 따라옴 + 도는 쪽으로 살짝 기울임
 	shoulderPivot = Vector3.new(0.75, -1.4, 0.7), -- 카메라 기준 오른쪽 어깨 (이 점을 중심으로 흔들림)
-	swayAmount = 0.0009,
+	swayAmount = 0.00006, -- 마우스 속도(픽셀/초) 1 당 흔들림 (라디안)
 	swayMax = 0.07, -- 최대 흔들림 (라디안)
 	swayRoll = 0.9, -- 좌우로 돌 때 기울기 비율
 	swayStiffness = 230, -- 클수록 빨리 따라옴
 	swayDamping = 0.85, -- 1 에 가까울수록 출렁임 없이 착 붙음
 	adsSpeed = 16,
+	adsDistance = 1.1, -- 총에 "Aim" 표시가 있으면 조준할 때 그 점이 눈앞 이 거리에 정확히 옴
 	raiseTime = 0.25,
 	-- 총 안의 움직이는 파트 (이름으로 찾음): "Mag" = 탄창, "Bolt" = 볼트 손잡이 (파트 또는 그 이름의 Model/Folder)
 	boltTravel = 0.38, -- 볼트 당길 때 뒤로 가는 거리
@@ -52,16 +53,22 @@ type Spring = { x: number, v: number }
 local function newSpring(): Spring
 	return { x = 0, v = 0 }
 end
-local function stepSpring(s: Spring, k: number, zeta: number, dt: number)
+local function stepSpring(s: Spring, k: number, zeta: number, dt: number, target: number?)
 	local c = 2 * zeta * math.sqrt(k)
+	local goal = target or 0
 	-- 큰 dt 에서 튀지 않게 잘게 나눠 계산
 	local steps = math.max(math.ceil(dt / (1 / 240)), 1)
 	local h = dt / steps
 	for _ = 1, steps do
-		local a = -k * s.x - c * s.v
+		local a = k * (goal - s.x) - c * s.v
 		s.v += a * h
 		s.x += s.v * h
 	end
+end
+
+-- 부드러운 최대치: 끝에서 딱 막히지 않고 점점 눌림
+local function soft(x: number, limit: number): number
+	return limit * math.tanh(x / limit)
 end
 
 local current: Model? = nil
@@ -69,6 +76,10 @@ local currentId: string? = nil
 local gripOffset = CFrame.identity
 local gunLength = 3
 local muzzleLocal: Vector3? = nil
+local foreLocal: Vector3? = nil
+local ejectLocal: Vector3? = nil
+local aimLocal: Vector3? = nil
+local hasGrip = false
 type ArmSet = { hand: BasePart?, fore: BasePart?, single: BasePart? }
 local rightArm: ArmSet = {}
 local leftArm: ArmSet = {}
@@ -83,6 +94,7 @@ local hammerSet: Moving? = nil
 local cylAngle, cylTarget = 0, 0
 local kickZ, kickP, kickR = newSpring(), newSpring(), newSpring()
 local swayX, swayY = newSpring(), newSpring()
+local mouseVel = Vector2.zero
 local adsBlend = 0
 
 local function smooth(a: number, b: number, t: number): number
@@ -118,6 +130,10 @@ local function placeholderGun(parent: Model)
 	muzzle.Name = "Muzzle"
 	muzzle.Position = Vector3.new(0, 0.05, -1.3)
 	muzzle.Parent = body
+	local eject = Instance.new("Attachment")
+	eject.Name = "Eject"
+	eject.Position = Vector3.new(0.2, 0.12, 0.25)
+	eject.Parent = body
 end
 
 -- 내 캐릭터 팔 복제 (R6: 팔 통짜 / R15: 아래팔 + 손). 옷(Shirt) 이 보이려면 같은 이름 + Humanoid 필요
@@ -248,10 +264,29 @@ function ViewModel.Set(weaponId: string)
 		mzPos = muzzleWorld()
 	end
 	gunLength = len
+	-- 모델 안의 표시점 (Attachment 또는 작은 파트, 이름으로 찾음)
+	local function point(name: string): Vector3?
+		local a = gun:FindFirstChild(name, true)
+		if a and a:IsA("Attachment") then
+			return a.WorldPosition
+		elseif a and a:IsA("BasePart") then
+			return a.Position
+		end
+		return nil
+	end
 	local stock = bbCF.Position - fwd * len / 2
-	local grip = CFrame.fromMatrix(stock + fwd * len * VM.grip, fwd:Cross(up), up, -fwd)
+	local gripPoint = point("Grip") -- 오른손이 쥐는 곳 (없으면 총 길이의 grip 비율 지점)
+	hasGrip = gripPoint ~= nil
+	local grip = CFrame.fromMatrix(gripPoint or (stock + fwd * len * VM.grip), fwd:Cross(up), up, -fwd)
 	gripOffset = grip:Inverse() * gun:GetPivot()
 	muzzleLocal = grip:PointToObjectSpace(mzPos or (bbCF.Position + fwd * len / 2))
+	local function localOf(name: string): Vector3?
+		local p = point(name)
+		return p and grip:PointToObjectSpace(p) or nil
+	end
+	foreLocal = localOf("Foregrip") -- 왼손 받치는 곳
+	ejectLocal = localOf("Eject") -- 탄피 배출구
+	aimLocal = localOf("Aim") -- 조준할 때 눈 앞에 오는 가늠자/조준기 위치
 	-- 탄창/볼트 파트 기억 (손잡이 기준 위치)
 	local function collect(name: string): Moving?
 		local list = {}
@@ -313,6 +348,18 @@ function ViewModel.MuzzlePosition(): Vector3?
 	return g and muzzleLocal and g:PointToWorldSpace(muzzleLocal) or nil
 end
 
+-- 탄피 배출구 위치 ("Eject" 표시가 없으면 nil)
+function ViewModel.EjectPosition(): Vector3?
+	local g = gunFrame()
+	return g and ejectLocal and g:PointToWorldSpace(ejectLocal) or nil
+end
+
+-- 리볼버 실린더 가운데 (장전 때 탄피 쏟기용, "Cylinder" 없으면 nil)
+function ViewModel.CylinderPosition(): Vector3?
+	local g = gunFrame()
+	return g and cylSet and g:PointToWorldSpace(cylSet.center) or nil
+end
+
 function ViewModel.Axes(): (Vector3?, Vector3?)
 	local g = gunFrame()
 	if not g then
@@ -364,10 +411,12 @@ function ViewModel.Update(cam: Camera, state)
 	-- 스프링들
 	local md: Vector2 = state.mouseDelta
 	-- 화면을 돌린 반대쪽으로 팔이 살짝 늦게 따라옴
-	swayX.v += md.X * VM.swayAmount * 60 * (1 - adsBlend * 0.6)
-	swayY.v += md.Y * VM.swayAmount * 60 * (1 - adsBlend * 0.6)
-	stepSpring(swayX, VM.swayStiffness, VM.swayDamping, dt)
-	stepSpring(swayY, VM.swayStiffness, VM.swayDamping, dt)
+	-- 마우스 "속도"를 부드럽게 걸러서 목표로 삼음 (프레임마다 튀는 값을 그대로 넣으면 탁탁 걸림)
+	local inst = dt > 0 and md / dt or Vector2.zero
+	mouseVel = mouseVel:Lerp(inst, math.min(dt * 18, 1))
+	local amt = VM.swayAmount * (1 - adsBlend * 0.6)
+	stepSpring(swayX, VM.swayStiffness, VM.swayDamping, dt, mouseVel.X * amt)
+	stepSpring(swayY, VM.swayStiffness, VM.swayDamping, dt, mouseVel.Y * amt)
 	stepSpring(kickZ, VM.kickStiffness, VM.kickDamping, dt)
 	stepSpring(kickP, VM.kickStiffness, VM.kickDamping, dt)
 	stepSpring(kickR, VM.kickStiffness * 0.8, VM.kickDamping, dt)
@@ -375,10 +424,12 @@ function ViewModel.Update(cam: Camera, state)
 	local breathe = math.sin(t * 1.7) * 0.01 * (1 - adsBlend * 0.8)
 	local raise = 1 - (1 - math.clamp((t - raiseStart) / VM.raiseTime, 0, 1)) ^ 3
 
-	local base = VM.hip:Lerp(VM.ads, adsBlend)
+	-- 조준 위치: "Aim" 표시가 있으면 그 점이 화면 정중앙(눈앞)에 오게, 없으면 VM.ads
+	local adsCF = aimLocal and CFrame.new(-aimLocal.X, -aimLocal.Y, -VM.adsDistance - aimLocal.Z) or VM.ads
+	local base = VM.hip:Lerp(adsCF, adsBlend)
 	-- 어깨를 중심으로 팔째 흔들림 (조준 중엔 어깨 대신 거의 눈앞 중심)
-	local sx = math.clamp(swayX.x, -VM.swayMax, VM.swayMax)
-	local sy = math.clamp(swayY.x, -VM.swayMax, VM.swayMax)
+	local sx = soft(swayX.x, VM.swayMax)
+	local sy = soft(swayY.x, VM.swayMax)
 	local pivot = CFrame.new(VM.shoulderPivot:Lerp(Vector3.new(0, -0.6, 0.4), adsBlend))
 	local swayCF = pivot * CFrame.Angles(sy, sx, sx * VM.swayRoll) * pivot:Inverse()
 	local cf = cam.CFrame * swayCF * base
@@ -451,8 +502,11 @@ function ViewModel.Update(cam: Camera, state)
 		end
 	end
 	-- 손: 오른손 = 손잡이(볼트 땐 뒤로 당김, 손 위로), 왼손 = 총열 받침(장전 땐 아래로 탄창 빼기)
-	local rHand = cf:PointToWorldSpace(Vector3.new(0.05 + 0.25 * pull, -0.25 + 0.35 * pull, 0.15 + 0.55 * pull))
-	local lHand = cf:PointToWorldSpace(Vector3.new(-0.05, -0.3 - 0.9 * leftDrop, -gunLength * (VM.foregrip - VM.grip) + 0.4 * leftDrop))
+	-- Grip/Foregrip 표시가 있으면 손이 정확히 그 자리 (없으면 대략 총 아래)
+	local rBase = hasGrip and Vector3.new(0, -0.1, 0) or Vector3.new(0.05, -0.25, 0.15)
+	local rHand = cf:PointToWorldSpace(rBase + Vector3.new(0.25 * pull, 0.35 * pull, 0.55 * pull))
+	local lBase = foreLocal and (foreLocal + Vector3.new(0, -0.12, 0)) or Vector3.new(-0.05, -0.3, -gunLength * (VM.foregrip - VM.grip))
+	local lHand = cf:PointToWorldSpace(lBase + Vector3.new(0, -0.9 * leftDrop, 0.4 * leftDrop))
 	local camCF = cam.CFrame
 	placeArm(rightArm, rHand, camCF:PointToWorldSpace(Vector3.new(1.2, -2.2, 0.6):Lerp(Vector3.new(0.7, -2, 0.6), adsBlend)), camCF)
 	placeArm(leftArm, lHand, camCF:PointToWorldSpace(Vector3.new(-1.1, -2.2, -0.2):Lerp(Vector3.new(-0.8, -2, -0.3), adsBlend)), camCF)

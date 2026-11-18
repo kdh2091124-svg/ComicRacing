@@ -127,6 +127,13 @@ local function equip(player: Player, char: Model, weaponId: string)
 	end
 	-- 손 끝에 손잡이, 총열은 팔이 뻗는 방향 (모델 받으면 각도 맞춤)
 	gun:PivotTo(hand.CFrame * CFrame.new(0, -hand.Size.Y / 2, 0) * CFrame.Angles(-math.pi / 2, 0, 0))
+	-- "Grip" 표시가 있으면 그 점이 정확히 손끝에 오게 옮김
+	local gripMark = gun:FindFirstChild("Grip", true)
+	local gripPos = gripMark and (gripMark:IsA("Attachment") and gripMark.WorldPosition or gripMark:IsA("BasePart") and gripMark.Position)
+	if gripPos then
+		local handTip = (hand.CFrame * CFrame.new(0, -hand.Size.Y / 2, 0)).Position
+		gun:PivotTo(gun:GetPivot() + (handTip - gripPos))
+	end
 	for _, p in gun:GetDescendants() do
 		if p:IsA("BasePart") then
 			local w = Instance.new("WeldConstraint")
